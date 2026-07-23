@@ -1,11 +1,17 @@
-Package: sft
-Version: 2.4
-Date: 2025-04-18
-Title: Functions for Systems Factorial Technology Analysis of Data
-Authors@R: c(person("Joe", "Houpt", role=c("aut", "cre"), email="joseph.houpt@utsa.edu", comment=c(ORCID="0000-0002-2784-5535")), 
-           person("Leslie", "Blaha", role="aut", email="Leslie.Blaha@us.af.mil"))
-Maintainer: Joe Houpt <joseph.houpt@utsa.edu>
+Package: sftplus
+Version: 1.0.0
+Date: 2026-07-21
+Title: Extended Tools for Systems Factorial Technology Analysis
+Authors@R: c(person("Zachary", "Howard", role=c("aut", "cre"), email="zach.howard@uwa.edu.au"),
+           person("Joseph", "Houpt", role=c("aut"), email="joseph.houpt@utsa.edu", comment=c(ORCID="0000-0002-2784-5535")),
+           person("Leslie", "Blaha", role="aut", email="Leslie.Blaha@us.af.mil")
+           )
+Author: Zachary Howard [aut, cre], Joseph Houpt [aut], Leslie Blaha [aut]
+Maintainer: Zachary Howard <zach.howard@uwa.edu.au>
 Depends: R (>= 3.5), methods, fda, SuppDists
-Description: A series of tools for analyzing Systems Factorial Technology data.  This includes functions for plotting and statistically testing capacity coefficient functions and survivor interaction contrast functions.  Houpt, Blaha, McIntire, Havig, and Townsend (2013) <doi:10.3758/s13428-013-0377-3> provide a basic introduction to Systems Factorial Technology along with examples using the sft R package.
-License: GPL (>=2)
-RoxygenNote: 6.0.1
+Imports: graphics, grDevices, splines, stats, utils
+Suggests: Rcpp, dplyr, ggplot2, rtdists, posterior, rstan, testthat (>= 3.0.0)
+Description: Tools for analyzing Systems Factorial Technology data, including capacity coefficients, survivor interaction contrasts, statistical tests, assessment functions, Bayesian distribution-free SIC tests, and LBA/OU simulation utilities. Houpt, Blaha, McIntire, Havig, and Townsend (2013) <doi:10.3758/s13428-013-0377-3> provide a basic introduction to Systems Factorial Technology along with examples using the sft R package.
+License: GPL (>= 2)
+Encoding: UTF-8
+RoxygenNote: 7.3.2

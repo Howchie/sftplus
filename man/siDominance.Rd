@@ -8,14 +8,17 @@ Function to test for the survivor function ordering predicted by the selective i
 }
     
 \usage{
-siDominance(HH, HL, LH, LL, method="ks")
+siDominance(HH, HL, LH, LL, method=c("ks", "dp"), nbin=20L, nsamp=10000L, seed=NULL)
 }
 \arguments{
   \item{HH}{Response times from the High--High condition.}
   \item{HL}{Response times from the High--Low condition.}
   \item{LH}{Response times from the Low--High condition.}
   \item{LL}{Response times from the Low--Low condition.}
-  \item{method}{Which type of hypothesis test to use for testing stochastic dominance relations, either as series of KS tests ("ks") or the dominance test based on Dirichlet process priors ("dp"). DP not yet implemented.}
+  \item{method}{Which type of hypothesis test to use for testing stochastic dominance relations, either as series of KS tests ("ks") or the Bayesian Dirichlet-process-style test ("dp").}
+  \item{nbin}{Number of common RT bins for the Bayesian route.}
+  \item{nsamp}{Number of prior/posterior Monte Carlo draws for the Bayesian route.}
+  \item{seed}{Optional reproducibility seed.}
 }
 \details{
 For an SIC function to distinguish among the processing types, the salience manipulation on each channel must selectively influence its respective channel (although see Eidels, Houpt, Altieri, Pei & Townsend, 2010 for SIC prediction from interactive parallel models).  Although the selective influence assumption cannot be directly tested, one implication is that the distribution the HH response times stochastically dominates the HL and LH distributions which each in turn stochastically dominate the LL response time distribution.  This implication is automatically tested in this function.  The KS dominance test uses eight two-sample Kolmogorov-Smirnov tests:  HH < HL, HH < LH, HL < LL, LH < LL should be significant while HH > HL, HH > LH, HL > LL, LH > LL should not.  The DP uses four tests to determine which relation has the highest Bayes factor assuming a Dirichlet process prior for each of (HH, HL), (HH, LH), (HL, LL) and (LH, LL).  See Heathcote, Brown, Wagenmakers & Eidels, 2010, for more details.

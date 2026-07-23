@@ -7,12 +7,15 @@ Capacity Coefficient for First-Terminating (OR) Processing
 Calculates the Capacity Coefficient for First-Terminating (OR) Processing
 }
 \usage{
-capacity.or(RT, CR=NULL, ratio=TRUE)
+capacity.or(RT, CR=NULL, ratio=TRUE, Condition=NULL, Subject=NULL)
 }
 \arguments{
   \item{RT}{A list of response time arrays.  The first array in the list is assumed to be the exhaustive condition.}
   \item{CR}{A list of correct/incorrect indicator arrays.  If NULL, assumes all are correct.}
   \item{ratio}{Indicates whether to return the standard ratio capacity coefficient or, if FALSE, the difference form.}
+  \item{Condition, Subject}{When \code{RT} is a row-wise SFT data frame,
+    optionally select one condition and one subject for conversion to the
+    list input.}
 }
 \details{
 The OR capacity coefficient compares performance on task to an unlimited-capacity, independent, parallel (UCIP) model using cumulative hazard functions.  Suppose \eqn{H_i(t)}{Hi(t)} is the cumulative hazard function for response times when process \eqn{i}{i} is completed in isolation and \eqn{H_i(t)}{Hi(t)} is the cumulative hazard function for response times when all processes occur together and a response is made as soon as any of the processes finish.  Then the OR capacity coefficient is given by, 

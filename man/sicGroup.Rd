@@ -7,14 +7,14 @@ SIC Analysis for a Group
 Calculates the SIC for each individual in each condition of a DFP experiment.  The function will plot each individuals SIC and return the results of the test for stochastic dominance and the statistical test of SIC form.
 }
 \usage{
-sicGroup(inData, sictest="ks", mictest=c("art", "anova"), domtest="ks", 
+sicGroup(inData, sictest=c("ks", "bf"), mictest=c("art", "anova"), domtest=c("ks", "dp"),
          alpha.sic=.05, plotSIC=TRUE, ...)
 }
 \arguments{
   \item{inData}{Data collected from a Double Factorial Paradigm experiment in standard form.}
-  \item{sictest}{Which type of hypothesis test to use for SIC form. "ks" is the only test currently implemented.}
+  \item{sictest}{Which type of hypothesis test to use for SIC form. "ks" is the frequentist route and "bf" uses Bayesian SIC model probabilities.}
   \item{mictest}{Which type of hypothesis test to use for the MIC. The adjusted rank transform (art) and analysis of variance (anova) are the only tests currently implemented.}
-  \item{domtest}{Which type of hypothesis test to use for testing stochastic dominance relations, either as series of KS tests ("ks") or the dominance test based on Dirichlet process priors ("dp").  DP not yet implemented.}
+  \item{domtest}{Which type of hypothesis test to use for stochastic dominance: series of KS tests ("ks") or a Bayesian Dirichlet-process-style route ("dp").}
   \item{alpha.sic}{Alpha level for determining a difference from zero used by the SIC overview.}
   \item{plotSIC}{Indicates whether or not to generate plots of the survivor interaction contrasts.}
   \item{...}{Arguments to be passed to plot function.}

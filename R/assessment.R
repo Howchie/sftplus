@@ -160,10 +160,14 @@ assessmentGroup <- function(inData, stopping.rule=c("OR", "AND", "STST"),
 }
 
 
-assessment <- function (RT, CR, stopping.rule = c("OR","AND","STST"), 
-    			correct = c(TRUE, FALSE), fast = c(TRUE, FALSE), 
-			detection = TRUE) {
+assessment <- function (RT, CR = NULL, stopping.rule = c("OR","AND","STST"),
+			correct = c(TRUE, FALSE), fast = c(TRUE, FALSE),
+			detection = TRUE, Condition = NULL, Subject = NULL) {
   rule <- match.arg(stopping.rule, c("OR", "AND", "STST"))
+  converted <- .sft_as_rt_cr(RT, CR, stopping.rule = rule,
+                             Condition = Condition, Subject = Subject)
+  RT <- converted$RT; CR <- converted$CR
+  CR <- .sft_cr_list(RT, CR)
   slow <- !fast
   incorrect <- !correct
   times <- sort(unique(unlist(RT)))

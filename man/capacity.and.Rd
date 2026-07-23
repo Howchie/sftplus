@@ -7,12 +7,15 @@ Capacity Coefficient for Exhaustive (AND) Processing
 Calculates the Capacity Coefficient for Exhaustive (AND) Processing
 }
 \usage{
-capacity.and(RT, CR=NULL, ratio=TRUE)
+capacity.and(RT, CR=NULL, ratio=TRUE, Condition=NULL, Subject=NULL)
 }
 \arguments{
   \item{RT}{A list of response time arrays.  The first array in the list is assumed to be the exhaustive condition.}
   \item{CR}{A list of correct/incorrect indicator arrays.  If NULL, assumes all are correct.}
   \item{ratio}{Indicates whether to return the standard ratio capacity coefficient or, if FALSE, the difference form.}
+  \item{Condition, Subject}{When \code{RT} is a row-wise SFT data frame,
+    optionally select one condition and one subject for conversion to the
+    list input.}
 }
 \details{
 The AND capacity coefficient compares performance on task to an unlimited-capacity, independent, parallel (UCIP) model using cumulative reverse hazard functions.  Suppose \eqn{K_i(t)}{Ki(t)} is the cumulative reverse hazard function for response times when process \eqn{i}{i} is completed in isolation and \eqn{K_i(t)}{Ki(t)} is the cumulative reverse hazard function for response times when all processes must completed together.  Then the AND capacity coefficient is given by, 

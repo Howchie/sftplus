@@ -7,11 +7,13 @@ UCIP Performance on OR Tasks
 Estimates the cumulative hazard function of an unlimited capacity, independent, parallel process on an OR task.
 }
 \usage{
-estimateUCIPor(RT, CR)
+estimateUCIPor(RT, CR, Condition=NULL, Subject=NULL)
 }
 \arguments{
   \item{RT}{A list of arrays of response times.  Each list is used to estimate the response time distribution of a separate channel.}
   \item{CR}{A list of arrays of correct (1) or incorrect (0) indicators corresponding to each element of the list RT.}
+  \item{Condition, Subject}{When \code{RT} is a row-wise SFT data frame,
+    optionally select one condition and one subject for conversion.}
 }
 
 \details{

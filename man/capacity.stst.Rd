@@ -7,12 +7,15 @@ Capacity Coefficient for Single-Target Self-Terminating (STST) Processing
 Calculates the Capacity Coefficient for Single-Target Self-Terminating (STST) Processing
 }
 \usage{
-capacity.stst(RT, CR=NULL, ratio=TRUE)
+capacity.stst(RT, CR=NULL, ratio=TRUE, Condition=NULL, Subject=NULL)
 }
 \arguments{
   \item{RT}{A list of response time arrays.  The first array in the list is assumed to be the single-target among N distractors condition.}
   \item{CR}{A list of correct/incorrect indicator arrays.  If NULL, assumes all are correct.}
   \item{ratio}{Indicates whether to return the standard ratio capacity coefficient or, if FALSE, the difference form.}
+  \item{Condition, Subject}{When \code{RT} is a row-wise SFT data frame,
+    optionally select one condition and one subject for conversion to the
+    list input.}
 }
 \details{
 The STST capacity coefficient compares performance on task to an unlimited-capacity, independent, parallel (UCIP) model using cumulative reverse hazard functions.  Suppose \eqn{K_{i,1}(t)}{Ki,1(t)} is the cumulative reverse hazard function for response times when single-target process \eqn{i}{i} is completed in isolation and \eqn{K_{i,n}(t)}{Ki,n(t)} is the cumulative reverse hazard function for response times when the single-target \eqn{i}{i} is processed among \eqn{n}{n} other processes, all completed together.  Then the STST capacity coefficient is given by, 

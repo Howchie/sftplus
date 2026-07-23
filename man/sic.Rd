@@ -8,7 +8,7 @@ Function to calculate survivor interaction contrast and associated measures.
 }
     
 \usage{
-sic(HH, HL, LH, LL, domtest="ks", sictest="ks", mictest=c("art", "anova"))
+sic(HH, HL, LH, LL, domtest="ks", sictest="ks", mictest=c("art", "anova"), interpolate=FALSE, nbin=20L, nsamp=10000L, maxn=500000L, seed=NULL, ...)
 }
 \arguments{
   \item{HH}{Response times from the High--High condition.}
@@ -16,8 +16,11 @@ sic(HH, HL, LH, LL, domtest="ks", sictest="ks", mictest=c("art", "anova"))
   \item{LH}{Response times from the Low--High condition.}
   \item{LL}{Response times from the Low--Low condition.}
   \item{sictest}{Which type of hypothesis test to use for SIC form.}
-  \item{domtest}{Which type of hypothesis test to use for testing stochastic dominance relations, either as series of KS tests ("ks") or the dominance test based on Dirichlet process priors ("dp"). DP not yet implemented.}
+  \item{domtest}{Which type of hypothesis test to use for testing stochastic dominance relations, either as series of KS tests ("ks") or the Bayesian Dirichlet-process-style route ("dp").}
   \item{mictest}{Which type of hypothesis test to use for the MIC, either adjusted rank transform or ANOVA. }
+  \item{interpolate}{Return an interpolated SIC curve rather than a step function.}
+  \item{nbin, nsamp, maxn, seed}{Controls for the Bayesian SIC/dominance Monte Carlo calculations.}
+  \item{...}{Additional arguments reserved for Bayesian calculations.}
 }
 \details{
      SIC(t) = (S_LL - S_LH) - (S_HL - S_HH)

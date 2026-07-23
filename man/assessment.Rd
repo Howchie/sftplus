@@ -7,8 +7,8 @@ Workload Assessment Functions
 Calculates the Workload Assessment Functions
 }
 \usage{
-assessment(RT, CR, stopping.rule=c("OR","AND", "STST"), correct=c(TRUE, FALSE), 
-  fast=c(TRUE, FALSE), detection=TRUE) 
+assessment(RT, CR = NULL, stopping.rule=c("OR","AND", "STST"), correct=c(TRUE, FALSE),
+  fast=c(TRUE, FALSE), detection=TRUE, Condition=NULL, Subject=NULL)
 }
 \arguments{
   \item{RT}{A list of response time arrays.  The first array in the list is assumed to be the exhaustive condition.}
@@ -17,6 +17,9 @@ assessment(RT, CR, stopping.rule=c("OR","AND", "STST"), correct=c(TRUE, FALSE),
   \item{correct}{Indicates whether to assess performance on correct trials.}
   \item{fast}{Indicates whether to use cumulative distribution functions or survivor functions to assess performance.}
   \item{detection}{Indicates whether to use a detection task baseline or a discrimination task baseline.}
+  \item{Condition, Subject}{When \code{RT} is a row-wise SFT data frame,
+    optionally select one condition and one subject for conversion to list
+    input.}
 }
 \details{
 The assessment functions are a generalization of the workload capacity functions that account for incorrect responses. Townsend & Altieri (2012) derived four different assessment functions each for AND and OR tasks to compare performance with two targets with the performance of an unlimited-capacity, independent, parallel (UCIP) model.  The correct assessment functions assess performance on correct trials and the incorrect assessment functions assess performance on the trials with incorrect responses.  The fast assessment functions use the cumulative distribution functions, similar to the AND capacity coefficient, and the slow assessment functions use the survivor functions, similar to the OR capacity coefficient.
