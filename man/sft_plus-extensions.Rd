@@ -57,8 +57,8 @@ sictestBayes(HH, HL, LH, LL, method = c("DP", "IG"), model = NULL, nbin = NULL, 
 simulate_sft(model = c("lba", "ou"), n, p_vec, design = NULL, salience = FALSE, logical_rules = NULL, sics = FALSE, cdfs = FALSE, a_t = FALSE, subject = 1, backend = c("auto", "Rcpp", "R"), dt = .001, max_time = 2, bridge = TRUE, bridge_exp_cutoff = -20, adaptive = TRUE, adaptive_mode = c("ptol", "distance"), adapt_factor = 32, adapt_eps = 1.5, p_tol = 1e-8, curv_tol = .05, kappa = NULL, tau = NULL)
 simulate_sft_group(model = c("lba", "ou"), n, params, nSubjects = NULL, subject_ids = NULL, combine = TRUE, ...)
 smooth_one_cdf(t, y, smooth_cdf = "none", smooth_spar = .65)
-capacityGroup.bayes(inData, CR = NULL, stopping.rule = c("OR", "AND", "STST"), ndraws = 10000L, prior_shape = 2, prior_rate = 0.5, seed = NULL, hdi = .94, prior_mean = 0, prior_sd = 1, burnin = 1000L, thin = 1L, chains = 4L, rope = NULL, method = c("InvGamma", "HalfNormal", "Centered"), prior_tau_sd = 1, adapt_delta = .95, max_treedepth = 12L, stan_control = list(), tau2_prior_shape = NULL, tau2_prior_rate = NULL, Condition = NULL, Subject = NULL, score_method = c("score", "capacity"), var_method = c("analytic", "bootstrap"), n_boot = 2000L)
-ucip.bayes(inData, CR = NULL, stopping.rule = c("OR", "AND", "STST"), ndraws = 10000L, seed = NULL, hdi = .94, prior_mean = 0, prior_sd = 1, chains = 4L, rope = NULL, Condition = NULL, Subject = NULL, score_method = c("score", "capacity"), var_method = c("analytic", "bootstrap"), n_boot = 2000L)
+capacityGroup.bayes(inData, CR = NULL, stopping.rule = c("OR", "AND", "STST"), ndraws = 10000L, prior_shape = 2, prior_rate = 0.5, seed = NULL, hdi = .94, prior_mean = 0, prior_sd = 1, burnin = 1000L, thin = 1L, chains = 4L, rope = NULL, method = c("InvGamma", "HalfNormal", "Centered"), prior_tau_sd = 1, adapt_delta = .95, max_treedepth = 12L, stan_control = list(), tau2_prior_shape = NULL, tau2_prior_rate = NULL, Condition = NULL, Subject = NULL, score_method = c("score", "multiplicative"), var_method = c("analytic", "bootstrap"), n_boot = 2000L)
+ucip.bayes(inData, CR = NULL, stopping.rule = c("OR", "AND", "STST"), ndraws = 10000L, seed = NULL, hdi = .94, prior_mean = 0, prior_sd = 1, chains = 4L, rope = NULL, Condition = NULL, Subject = NULL, score_method = c("score", "multiplicative"), var_method = c("analytic", "bootstrap"), n_boot = 2000L)
 micGroup.bayes(inData, Condition = NULL, Subject = NULL, correct = TRUE, var_method = c("analytic", "bootstrap"), n_boot = 2000L, ndraws = 10000L, prior_shape = 2, prior_rate = 0.01, seed = NULL, hdi = .94, prior_mean = 0, prior_sd = 0.10, burnin = 1000L, thin = 1L, chains = 4L, rope = NULL, method = c("InvGamma", "HalfNormal", "Centered"), prior_tau_sd = 0.10, adapt_delta = .95, max_treedepth = 12L, stan_control = list(), tau2_prior_shape = NULL, tau2_prior_rate = NULL)
 }
 \arguments{
@@ -174,8 +174,32 @@ micGroup.bayes(inData, Condition = NULL, Subject = NULL, correct = TRUE, var_met
   \code{Rhat}, bulk and tail effective sample sizes, and posterior shrinkage
   weights. A practical-equivalence
   probability is reported only when a scientifically chosen \code{rope} is
-  supplied. A formal Bayes factor for the UCIP null would require an
-  explicitly constrained generative model and is not returned here.
+  supplied.
+
+  The \code{bayes_factor} element reports Bayes factors that, unlike a
+  directional posterior probability, quantify evidence \emph{for} as well as
+  against the null. Which test appears is matched to the effect scale.
+  \code{point_null} is the Savage-Dickey density ratio for the exact UCIP
+  prediction (population \eqn{mu = 0}, or the single participant effect \eqn{= 0}
+  with \eqn{tau} left free in the hierarchy); for the hierarchy it is
+  Rao-Blackwellised from the exact Gibbs full conditional of \eqn{mu}, so it is
+  valid for all three samplers. \code{interval_null} is the interval Bayes
+  factor for the practical-equivalence region \eqn{|effect| < \code{rope}},
+  crediting the prior-to-posterior odds shift into that region; it is reported
+  only when a \code{rope} is supplied. The point null suits the raw \code{score}
+  effect and the dimensionless \code{multiplicative} (\eqn{eta}) effect; the
+  interval null suits \code{multiplicative} but not the information-referenced
+  raw \code{score}. \code{BF01} favours the null and \code{BF10} the alternative.
+  Because the point-null Bayes factor depends on \code{prior_sd} (the
+  Jeffreys-Lindley sensitivity), a diffuse alternative prior inflates the
+  evidence for the null; interpret it together with the posterior summary.
+
+  \code{score_method} selects the per-participant effect that is pooled.
+  \code{"score"} (default) models the raw score effect \eqn{U_i / V_i};
+  \code{"multiplicative"} models \eqn{eta_i = \log(A_i / B_i)}, the log weighted
+  capacity ratio, with its delta-method precision. \code{"multiplicative"} was
+  formerly named \code{"capacity"}, which (with \code{"logcapacity"} and
+  \code{"eta"}) is still accepted as an alias.
 
   \code{micGroup.bayes} is the mean-interaction-contrast companion. It reads the
   salience \eqn{2\times2} cells from \code{Channel1} and \code{Channel2}
@@ -192,7 +216,11 @@ micGroup.bayes(inData, Condition = NULL, Subject = NULL, correct = TRUE, var_met
   a negative \eqn{rho} is under-additive (parallel exhaustive), and \eqn{rho}
   near zero is additive (serial). The \code{rope} is a proportional
   practical-equivalence threshold: \code{rope = 0.025} treats interactions below
-  \eqn{2.5\%} of mean RT as negligible. A single participant is fitted with the
+  \eqn{2.5\%} of mean RT as negligible, and it is also the region for the
+  \code{interval_null} Bayes factor. Because \eqn{rho = 0} is a knife-edge
+  boundary between processing architectures rather than a scientific point
+  prediction, \code{micGroup.bayes} reports only the interval Bayes factor and
+  no point null. A single participant is fitted with the
   analytic posterior, and the sampler, diagnostics, predictive checks, and
   shrinkage machinery are shared with \code{capacityGroup.bayes}.
 }

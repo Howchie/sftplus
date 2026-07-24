@@ -11,7 +11,7 @@ ucip.bayes <- function(inData, CR = NULL,
                        hdi = .94, prior_mean = 0, prior_sd = 1,
                        chains = 4L, rope = NULL,
                        Condition = NULL, Subject = NULL,
-                       score_method = c("score", "capacity"),
+                       score_method = c("score", "multiplicative"),
                        var_method = c("analytic", "bootstrap"), n_boot = 2000L) {
   stopping.rule <- match.arg(stopping.rule)
   score_method <- .sft_score_method(score_method)
@@ -38,11 +38,17 @@ ucip.bayes <- function(inData, CR = NULL,
   precision <- scored$precision[[1L]]
   effect_name <- scored$effect_name
   observed_name <- paste0(effect_name, "_hat")
-  precision_name <- if (score_method == "capacity") "P" else "V"
+  precision_name <- if (score_method == "multiplicative") "P" else "V"
 
   fit <- .sft_normal_analytic_fit(effect_hat, precision, input$subject[[1L]],
                                   effect_name, ndraws, chains, prior_mean,
                                   prior_sd, hdi, rope)
+  # An exact point null (effect = 0 is the UCIP prediction) applies on either
+  # scale; an interval null only suits the dimensionless multiplicative/eta
+  # effect, not the information-referenced raw score.
+  bayes_factor <- .sft_analytic_bayes_factor(
+    fit, prior_mean, prior_sd, rope,
+    point = TRUE, interval = identical(score_method, "multiplicative"))
   effect_draws <- fit$effect_draws
   subject_parameter <- fit$subject_parameter
   summary <- fit$summary
@@ -63,6 +69,7 @@ ucip.bayes <- function(inData, CR = NULL,
                                 mean(abs(effect_draws[, 1L]) <= rope),
                               input$subject[[1L]])
     ),
+    bayes_factor = bayes_factor,
     summary = summary, population_summary = NULL,
     subject_summary = subject_summary, score = scored$score, draws = draws,
     prior_predictive = prior_predictive,
@@ -79,7 +86,7 @@ ucip.bayes <- function(inData, CR = NULL,
                             observed_name, effect_name, precision_name),
       subject = sprintf("%s ~ Normal(mean = prior_mean, sd = prior_sd)",
                         effect_name),
-      interpretation = if (score_method == "capacity") {
+      interpretation = if (score_method == "multiplicative") {
         "exp(eta) is the participant weighted capacity ratio"
       } else {
         "theta is the unstandardised score-effect parameter"
@@ -97,8 +104,9 @@ ucip.bayes <- function(inData, CR = NULL,
 
 # Hierarchical Bayesian companion to the UCIP/Cz score test. The default
 # score_method = "score" preserves the original U/V score-effect model;
-# score_method = "capacity" uses eta = log(A/B) with its delta-method
-# precision. The InvGamma method is the exact conjugate Gibbs sampler.
+# score_method = "multiplicative" uses eta = log(A/B) with its delta-method
+# precision (formerly "capacity", still accepted as an alias). The InvGamma
+# method is the exact conjugate Gibbs sampler.
 # HalfNormal is a non-centred Stan model and Centered is its centred Stan
 # counterpart; both use a half-normal prior on tau.
 #
@@ -118,7 +126,7 @@ capacityGroup.bayes <- function(inData, CR = NULL, stopping.rule = c("OR", "AND"
                             max_treedepth = 12L, stan_control = list(),
                             tau2_prior_shape = NULL, tau2_prior_rate = NULL,
                             Condition = NULL, Subject = NULL,
-                            score_method = c("score", "capacity"),
+                            score_method = c("score", "multiplicative"),
                             var_method = c("analytic", "bootstrap"), n_boot = 2000L) {
   stopping.rule <- match.arg(stopping.rule)
   score_method <- .sft_score_method(score_method)
@@ -166,7 +174,7 @@ capacityGroup.bayes <- function(inData, CR = NULL, stopping.rule = c("OR", "AND"
   precision <- scored$precision
   effect_name <- scored$effect_name
   observed_name <- paste0(effect_name, "_hat")
-  precision_name <- if (score_method == "capacity") "P" else "V"
+  precision_name <- if (score_method == "multiplicative") "P" else "V"
 
   fit <- .sft_normal_hierarchy_fit(effect_hat, precision, input$subject,
                                    effect_name, method, ndraws, burnin, thin,
@@ -187,6 +195,12 @@ capacityGroup.bayes <- function(inData, CR = NULL, stopping.rule = c("OR", "AND"
   prior_predictive <- fit$prior_predictive
   stan_fit <- fit$stan_fit
   sampler_diagnostics <- fit$sampler_diagnostics
+  # UCIP is an exact theoretical prediction, so the population mean carries a
+  # point null (mu = 0); the interval null is reserved for the dimensionless
+  # multiplicative/eta effect, whose ROPE is interpretable.
+  bayes_factor <- .sft_hierarchy_bayes_factor(
+    fit, prior_mean, prior_sd, rope,
+    point = TRUE, interval = identical(score_method, "multiplicative"))
   prior <- if (method == "InvGamma") {
     list(mu = list(mean = prior_mean, sd = prior_sd),
          tau2 = list(family = "inverse-Gamma", shape = prior_shape,
@@ -200,7 +214,7 @@ capacityGroup.bayes <- function(inData, CR = NULL, stopping.rule = c("OR", "AND"
                                observed_name, effect_name, precision_name),
          subject = sprintf("%s[i] ~ Normal(mean = mu, sd = tau)", effect_name),
          population = "mu ~ Normal(mean = prior_mean, sd = prior_sd)",
-         interpretation = if (score_method == "capacity") {
+         interpretation = if (score_method == "multiplicative") {
            "exp(eta[i]) is the participant weighted capacity ratio"
          } else {
            "theta[i] is the participant unstandardised score-effect parameter"
@@ -212,7 +226,7 @@ capacityGroup.bayes <- function(inData, CR = NULL, stopping.rule = c("OR", "AND"
                                observed_name, effect_name, precision_name),
          subject = sprintf("%s[i] ~ Normal(mean = mu, sd = tau)", effect_name),
          population = "mu ~ Normal(mean = prior_mean, sd = prior_sd)",
-         interpretation = if (score_method == "capacity") {
+         interpretation = if (score_method == "multiplicative") {
            "exp(eta[i]) is the participant weighted capacity ratio"
          } else {
            "theta[i] is the participant unstandardised score-effect parameter"
@@ -233,6 +247,7 @@ capacityGroup.bayes <- function(inData, CR = NULL, stopping.rule = c("OR", "AND"
       subject_rope = setNames(if (is.null(rope)) rep(NA_real_, length(effect_hat)) else
                                 colMeans(abs(effect_draws) <= rope), input$subject)
     ),
+    bayes_factor = bayes_factor,
     summary = summary, population_summary = population,
     subject_summary = subject_summary, score = scored$score, draws = draws,
     prior_predictive = prior_predictive,

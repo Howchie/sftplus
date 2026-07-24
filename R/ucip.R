@@ -31,8 +31,13 @@
   key <- tolower(gsub("[^A-Za-z]", "", as.character(method[[1L]])))
   switch(key,
          score = "score", theta = "score",
-         capacity = "capacity", logcapacity = "capacity", eta = "capacity",
-         stop("score_method must be one of 'score' or 'capacity'."))
+         multiplicative = "multiplicative", logratio = "multiplicative",
+         # "capacity" and its variants are retained as back-compatible aliases:
+         # the eta = log(A/B) method was renamed because "capacity" names the
+         # whole analysis (capacityGroup.bayes, capacity.or).
+         capacity = "multiplicative", logcapacity = "multiplicative",
+         eta = "multiplicative",
+         stop("score_method must be one of 'score' or 'multiplicative'."))
 }
 
 

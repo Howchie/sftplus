@@ -364,6 +364,11 @@ micGroup.bayes <- function(inData, Condition = NULL, Subject = NULL,
     fit <- .sft_normal_analytic_fit(effect_hat[[1L]], precision[[1L]],
                                     subject[[1L]], effect_name, ndraws, chains,
                                     prior_mean, prior_sd, hdi, rope)
+    # The relative MIC is dimensionless with a proportional ROPE, so the
+    # interval null (negligible interaction) is the meaningful test; an exact
+    # point null at rho = 0 is a knife-edge and is not reported.
+    bayes_factor <- .sft_analytic_bayes_factor(fit, prior_mean, prior_sd, rope,
+                                               point = FALSE, interval = TRUE)
     prior_predictive <- list(score = fit$prior_score)
     prior_predictive[[effect_name]] <- fit$prior_effect
     prior_predictive <- prior_predictive[c(effect_name, "score")]
@@ -372,6 +377,7 @@ micGroup.bayes <- function(inData, Condition = NULL, Subject = NULL,
     return(list(
       statistic = setNames(mean(fit$effect_draws[, 1L]), fit$subject_parameter),
       posterior_probability = .sft_mic_subject_probs(fit$effect_draws, subject, rope),
+      bayes_factor = bayes_factor,
       summary = fit$summary, population_summary = NULL,
       subject_summary = fit$subject_summary, score = scored$score,
       draws = fit$draws, prior_predictive = prior_predictive,
@@ -395,6 +401,10 @@ micGroup.bayes <- function(inData, Condition = NULL, Subject = NULL,
                                    prior_tau_sd, seed, adapt_delta, max_treedepth,
                                    stan_control, hdi, rope)
   mu_draws <- fit$mu_draws
+  # Interval null on the dimensionless population relative MIC (the exact point
+  # null at mu = 0 is omitted; see the single-subject branch).
+  bayes_factor <- .sft_hierarchy_bayes_factor(fit, prior_mean, prior_sd, rope,
+                                              point = FALSE, interval = TRUE)
   prior <- if (method == "InvGamma") {
     list(mu = list(mean = prior_mean, sd = prior_sd),
          tau2 = list(family = "inverse-Gamma", shape = prior_shape,
@@ -412,6 +422,7 @@ micGroup.bayes <- function(inData, Condition = NULL, Subject = NULL,
              mean(abs(mu_draws) <= rope)),
       .sft_mic_subject_probs(fit$effect_draws, subject, rope)
     ),
+    bayes_factor = bayes_factor,
     summary = fit$summary, population_summary = fit$population,
     subject_summary = fit$subject_summary, score = scored$score,
     draws = fit$draws, prior_predictive = fit$prior_predictive,

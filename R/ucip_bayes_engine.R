@@ -212,6 +212,107 @@
 }
 
 
+# ---- Bayes factors for the population / single-effect null -----------------
+#
+# Two complementary null tests, both computed from the draws the fit builders
+# above already return. Which one is scientifically appropriate depends on the
+# effect scale, so the public orchestrators choose at their call sites (an exact
+# point null suits the raw score and the multiplicative/eta effect; an interval
+# null suits the dimensionless relative MIC and the eta effect). The generalised
+# helpers themselves can compute either from any normal-normal fit.
+
+
+# Point-null Savage-Dickey density ratio for an exact zero (the population mean
+# mu = 0, or a single participant effect = 0). For the hierarchy it is
+# Rao-Blackwellised: the exact Gibbs full conditional mu | theta, tau is
+# Normal(m_mu, v_mu) with the same v_mu / m_mu used by the sampler, so averaging
+# its density at the null over the posterior draws of (theta, tau) is a
+# low-variance estimate of the marginal posterior density at zero. It is exact
+# for the conjugate sampler and equally valid for the Stan variants, whose tau
+# prior only reshapes the draws being averaged. BF01 > 1 favours the null. Its
+# magnitude depends on the alternative prior_sd (the Jeffreys-Lindley
+# sensitivity): a diffuse prior inflates the evidence for the null.
+.sft_point_null_bf <- function(prior_mean, prior_sd, null = 0,
+                               post_mean = NULL, post_var = NULL,
+                               effect_draws = NULL, tau_draws = NULL) {
+  prior_density <- stats::dnorm(null, prior_mean, prior_sd)
+  posterior_density <- if (!is.null(post_mean)) {
+    stats::dnorm(null, post_mean, sqrt(post_var))
+  } else {
+    n <- ncol(effect_draws)
+    tau2 <- tau_draws^2
+    v_mu <- 1 / (n / tau2 + 1 / prior_sd^2)
+    m_mu <- v_mu * (rowSums(effect_draws) / tau2 + prior_mean / prior_sd^2)
+    mean(stats::dnorm(null, m_mu, sqrt(v_mu)))
+  }
+  bf01 <- posterior_density / prior_density
+  list(null = null,
+       posterior_density_at_null = posterior_density,
+       prior_density_at_null = prior_density,
+       BF01 = bf01, BF10 = 1 / bf01,
+       posterior_probability_null = bf01 / (1 + bf01),
+       estimator = if (is.null(post_mean)) {
+         "Savage-Dickey (Rao-Blackwellised)"
+       } else "Savage-Dickey (closed form)")
+}
+
+
+# Interval-null Bayes factor: how much the data move probability into the
+# practical-equivalence region |effect| < delta relative to the prior. Unlike
+# the raw ROPE probability it credits the prior-to-posterior odds shift. The
+# marginal prior on mu (and on a single analytic effect) is Normal(prior_mean,
+# prior_sd), so the prior mass in the region is available in closed form.
+.sft_interval_null_bf <- function(effect_draws, delta, prior_mean, prior_sd) {
+  posterior_null <- mean(abs(effect_draws) < delta)
+  prior_null <- stats::pnorm(delta, prior_mean, prior_sd) -
+    stats::pnorm(-delta, prior_mean, prior_sd)
+  posterior_odds <- posterior_null / (1 - posterior_null)
+  prior_odds <- prior_null / (1 - prior_null)
+  bf01 <- posterior_odds / prior_odds
+  list(delta = delta,
+       posterior_null_probability = posterior_null,
+       prior_null_probability = prior_null,
+       BF01 = bf01, BF10 = 1 / bf01)
+}
+
+
+# Assemble the bayes_factor element for a single-subject analytic fit. The point
+# null always applies; the interval null needs a practical-equivalence
+# threshold (rope) and is skipped without one. point / interval let the caller
+# match the tests to the effect scale.
+.sft_analytic_bayes_factor <- function(fit, prior_mean, prior_sd, rope,
+                                       point = TRUE, interval = TRUE) {
+  out <- list()
+  if (point) {
+    out$point_null <- .sft_point_null_bf(prior_mean, prior_sd,
+                                         post_mean = fit$post_mean,
+                                         post_var = fit$post_var)
+  }
+  if (interval && !is.null(rope)) {
+    out$interval_null <- .sft_interval_null_bf(fit$effect_draws[, 1L], rope,
+                                               prior_mean, prior_sd)
+  }
+  if (length(out)) out else NULL
+}
+
+
+# Assemble the bayes_factor element for a hierarchical fit's population mean mu.
+.sft_hierarchy_bayes_factor <- function(fit, prior_mean, prior_sd, rope,
+                                        point = TRUE, interval = TRUE) {
+  out <- list()
+  if (point) {
+    out$point_null <- .sft_point_null_bf(prior_mean, prior_sd,
+                                         effect_draws = fit$effect_draws,
+                                         tau_draws = fit$tau_draws)
+  }
+  if (interval && !is.null(rope)) {
+    out$interval_null <- .sft_interval_null_bf(fit$mu_draws, rope,
+                                               prior_mean, prior_sd)
+  }
+  if (length(out)) out else NULL
+}
+
+
 .sft_bayes_method <- function(method) {
   if (length(method) == 0L || is.null(method)) return("InvGamma")
   key <- tolower(gsub("[^A-Za-z]", "", as.character(method[[1L]])))
@@ -268,10 +369,11 @@
 
 
 # The effect a single UCIP bootstrap replicate contributes: the score-effect
-# U/V for method = "score" or the log-capacity ratio for method = "capacity".
+# U/V for method = "score" or the log-capacity ratio for the "multiplicative"
+# (eta = log(A/B)) method.
 .sft_ucip_boot_effect <- function(rt, CR, stopping.rule, method) {
   s <- .sft_ucip_score(rt, CR, stopping.rule = stopping.rule)
-  if (method == "capacity") s$log_capacity else s$numer / s$variance
+  if (method == "multiplicative") s$log_capacity else s$numer / s$variance
 }
 
 
@@ -302,7 +404,7 @@
 
 
 .sft_ucip_score_data <- function(input, stopping.rule,
-                                 method = c("score", "capacity"),
+                                 method = c("score", "multiplicative"),
                                  var_method = "analytic", n_boot = 2000L) {
   method <- .sft_score_method(method)
   var_method <- .sft_var_method(var_method)
@@ -322,10 +424,10 @@
     is.finite(x$log_capacity) && is.finite(x$log_capacity_precision) &&
       x$log_capacity_precision > 0
   }, logical(1))
-  usable <- if (method == "capacity") score_ok & capacity_ok else score_ok
+  usable <- if (method == "multiplicative") score_ok & capacity_ok else score_ok
 
   if (!any(usable)) {
-    stop(if (method == "capacity") {
+    stop(if (method == "multiplicative") {
       "No participant has an estimable positive weighted capacity effect with positive variance."
     } else {
       "No participant has a finite UCIP score with positive variance."
@@ -333,7 +435,7 @@
   }
   if (!all(usable)) {
     warning("Dropping ", sum(!usable), " participant(s) without an ",
-            if (method == "capacity") "estimable capacity effect" else "estimable UCIP score",
+            if (method == "multiplicative") "estimable capacity effect" else "estimable UCIP score",
             ": ", paste(input$subject[!usable], collapse = ", "), ".", call. = FALSE)
     scores <- scores[usable]
     input$RT <- input$RT[usable]
@@ -348,9 +450,9 @@
   U <- vapply(scores, function(x) x$numer, numeric(1))
   V <- vapply(scores, function(x) x$variance, numeric(1))
 
-  effect_hat <- if (method == "capacity") eta_hat else theta_hat
-  precision <- if (method == "capacity") eta_precision else theta_precision
-  effect_name <- if (method == "capacity") "eta" else "theta"
+  effect_hat <- if (method == "multiplicative") eta_hat else theta_hat
+  precision <- if (method == "multiplicative") eta_precision else theta_precision
+  effect_name <- if (method == "multiplicative") "eta" else "theta"
 
   # An optional within-subject bootstrap variance for the active effect scale.
   # It replaces the closed-form precision used by the hierarchy; the analytic

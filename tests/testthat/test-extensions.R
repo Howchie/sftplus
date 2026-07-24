@@ -80,7 +80,7 @@ test_that("log-capacity and score scales agree near the UCIP model", {
     input, "OR", method = "score"
   )
   capacity_data <- sftplus:::.sft_ucip_score_data(
-    input, "OR", method = "capacity"
+    input, "OR", method = "multiplicative"
   )
 
   # Both paths reuse the same score decomposition; only the observation
@@ -92,6 +92,51 @@ test_that("log-capacity and score scales agree near the UCIP model", {
 
   eta_z <- capacity_data$eta_hat * sqrt(capacity_data$precision)
   expect_equal(eta_z, unname(score$statistic), tolerance = 0.25)
+
+  # "capacity" (and eta/logcapacity) are retained as back-compatible aliases of
+  # the renamed "multiplicative" method.
+  expect_identical(sftplus:::.sft_score_method("capacity"), "multiplicative")
+  expect_identical(sftplus:::.sft_score_method("eta"), "multiplicative")
+  alias_data <- sftplus:::.sft_ucip_score_data(input, "OR", method = "capacity")
+  expect_equal(alias_data$eta_hat, capacity_data$eta_hat)
+})
+
+test_that("Bayes factors are matched to each effect scale", {
+  set.seed(2026)
+  mk <- function(rate) {
+    rt <- list(rexp(90, 3.5 * rate), rexp(90, 1.5 * rate), rexp(90, 2 * rate))
+    list(RT = rt, CR = lapply(rt, function(x) rep(TRUE, length(x))))
+  }
+  subs <- lapply(c(1, 1.1, 0.9, 1.05, 0.95, 1.02, 0.98), mk)
+  RT <- lapply(subs, `[[`, "RT")
+  CR <- lapply(subs, `[[`, "CR")
+  names(RT) <- paste0("P", seq_along(RT))
+
+  # Raw score scale: exact point null only (no meaningful ROPE, so no interval).
+  g_score <- capacityGroup.bayes(RT, CR, stopping.rule = "OR",
+                                 score_method = "score", rope = 0.05,
+                                 ndraws = 4000, burnin = 500, chains = 4, seed = 7)
+  expect_named(g_score$bayes_factor, "point_null")
+  expect_match(g_score$bayes_factor$point_null$estimator, "Rao-Blackwell")
+  expect_equal(g_score$bayes_factor$point_null$BF10,
+               1 / g_score$bayes_factor$point_null$BF01)
+
+  # The Rao-Blackwellised density at zero matches a KDE of the marginal mu draws.
+  mu <- g_score$draws$mu
+  post_kde <- stats::approx(stats::density(mu, n = 4096), xout = 0)$y
+  expect_equal(g_score$bayes_factor$point_null$posterior_density_at_null,
+               post_kde, tolerance = 0.1)
+  expect_equal(g_score$bayes_factor$point_null$prior_density_at_null,
+               stats::dnorm(0, 0, g_score$prior$mu$sd))
+
+  # Multiplicative (eta) scale: both the point and interval nulls apply.
+  g_mult <- capacityGroup.bayes(RT, CR, stopping.rule = "OR",
+                                score_method = "multiplicative", rope = 0.1,
+                                ndraws = 2000, burnin = 500, chains = 2, seed = 7)
+  expect_named(g_mult$bayes_factor, c("point_null", "interval_null"))
+  expect_equal(g_mult$bayes_factor$interval_null$delta, 0.1)
+  expect_equal(g_mult$bayes_factor$interval_null$posterior_null_probability,
+               mean(abs(g_mult$draws$mu) < 0.1))
 })
 
 test_that("single-subject UCIP Bayesian companion uses the analytic posterior", {
@@ -272,6 +317,12 @@ test_that("micGroup.bayes pools the dimensionless relative MIC hierarchically", 
   cells <- sftplus:::.sft_mic_cells_from_data(d, Subject = "P1")$cells[[1L]]
   mt <- mic.test(cells$HH, cells$HL, cells$LH, cells$LL)
   expect_equal(ans$score$MIC[ans$score$subject == "P1"], unname(mt$statistic))
+  # The relative MIC gets the interval null (its proportional ROPE), not a
+  # knife-edge point null at rho = 0.
+  expect_named(ans$bayes_factor, "interval_null")
+  expect_equal(ans$bayes_factor$interval_null$delta, .025)
+  expect_equal(ans$bayes_factor$interval_null$posterior_null_probability,
+               mean(abs(ans$draws$mu) < .025))
 })
 
 test_that("relative MIC is invariant to multiplicative participant speed", {
