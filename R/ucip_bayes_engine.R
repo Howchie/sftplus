@@ -217,8 +217,8 @@
 # Two complementary null tests, both computed from the draws the fit builders
 # above already return. Which one is scientifically appropriate depends on the
 # effect scale, so the public orchestrators choose at their call sites (an exact
-# point null suits the raw score and the multiplicative/eta effect; an interval
-# null suits the dimensionless relative MIC and the eta effect). The generalised
+# point null suits every score scale; an interval null suits the dimensionless
+# relative MIC, eta, and reference-information phi effects). The generalised
 # helpers themselves can compute either from any normal-normal fit.
 
 
@@ -369,11 +369,20 @@
 
 
 # The effect a single UCIP bootstrap replicate contributes: the score-effect
-# U/V for method = "score" or the log-capacity ratio for the "multiplicative"
-# (eta = log(A/B)) method.
-.sft_ucip_boot_effect <- function(rt, CR, stopping.rule, method) {
+# U/V for method = "score", the reference-information standardized score
+# effect for method = "standardized", or the log-capacity ratio for the
+# "multiplicative" (eta = log(A/B)) method. For the standardized score,
+# v_ref is supplied by the original fitted participants and is held fixed
+# across bootstrap replicates.
+.sft_ucip_boot_effect <- function(rt, CR, stopping.rule, method,
+                                  v_ref = NULL) {
   s <- .sft_ucip_score(rt, CR, stopping.rule = stopping.rule)
-  if (method == "multiplicative") s$log_capacity else s$numer / s$variance
+  if (method == "multiplicative") {
+    s$log_capacity
+  } else {
+    theta <- s$numer / s$variance
+    if (method == "standardized") theta * sqrt(v_ref) else theta
+  }
 }
 
 
@@ -382,7 +391,8 @@
 # within each condition, keeping each RT paired with its correctness, and the
 # effect is recomputed on every replicate. Non-finite replicates (e.g. a
 # resample with no correct trials in a channel for log-capacity) are dropped.
-.sft_ucip_boot_precision <- function(rt, CR, stopping.rule, method, n_boot) {
+.sft_ucip_boot_precision <- function(rt, CR, stopping.rule, method, n_boot,
+                                     v_ref = NULL) {
   reps <- vapply(seq_len(n_boot), function(b) {
     rb <- vector("list", length(rt))
     cb <- vector("list", length(rt))
@@ -392,7 +402,7 @@
       rb[[i]] <- rt[[i]][idx]
       cb[[i]] <- CR[[i]][idx]
     }
-    tryCatch(.sft_ucip_boot_effect(rb, cb, stopping.rule, method),
+    tryCatch(.sft_ucip_boot_effect(rb, cb, stopping.rule, method, v_ref),
              error = function(e) NA_real_)
   }, numeric(1))
   reps <- reps[is.finite(reps)]
@@ -404,7 +414,7 @@
 
 
 .sft_ucip_score_data <- function(input, stopping.rule,
-                                 method = c("score", "multiplicative"),
+                                 method = c("score", "multiplicative", "standardized"),
                                  var_method = "analytic", n_boot = 2000L) {
   method <- .sft_score_method(method)
   var_method <- .sft_var_method(var_method)
@@ -450,9 +460,19 @@
   U <- vapply(scores, function(x) x$numer, numeric(1))
   V <- vapply(scores, function(x) x$variance, numeric(1))
 
-  effect_hat <- if (method == "multiplicative") eta_hat else theta_hat
+  # The standardized score is expressed in reference-information units. The
+  # reference is computed after degenerate-subject dropping so it is based on
+  # exactly the participants entering the fit. For one participant this makes
+  # phi_hat = Cz and its analytic precision equal to one by construction.
+  V_ref <- if (method == "standardized") stats::median(V) else NULL
+  phi_hat <- if (method == "standardized") theta_hat * sqrt(V_ref) else NULL
+
+  effect_hat <- if (method == "multiplicative") eta_hat else if (
+    method == "standardized") phi_hat else theta_hat
   precision <- if (method == "multiplicative") eta_precision else theta_precision
-  effect_name <- if (method == "multiplicative") "eta" else "theta"
+  if (method == "standardized") precision <- V / V_ref
+  effect_name <- if (method == "multiplicative") "eta" else if (
+    method == "standardized") "phi" else "theta"
 
   # An optional within-subject bootstrap variance for the active effect scale.
   # It replaces the closed-form precision used by the hierarchy; the analytic
@@ -463,7 +483,7 @@
     boot_precision <- vapply(seq_along(input$RT), function(i) {
       cr_i <- .sft_cr_list(input$RT[[i]], input$CR[[i]])
       .sft_ucip_boot_precision(lapply(input$RT[[i]], as.numeric), cr_i,
-                               stopping.rule, method, n_boot)
+                               stopping.rule, method, n_boot, V_ref)
     }, numeric(1))
     undefined <- !is.finite(boot_precision)
     boot_precision[undefined] <- precision[undefined]
@@ -477,6 +497,19 @@
       U = U,
       V = V,
       theta_hat = theta_hat,
+      se = used_se,
+      se_analytic = analytic_se,
+      Cz = vapply(scores, function(x) unname(x$statistic), numeric(1)),
+      stringsAsFactors = FALSE
+    )
+  } else if (method == "standardized") {
+    data.frame(
+      subject = input$subject,
+      U = U,
+      V = V,
+      V_ref = rep(V_ref, length(V)),
+      theta_hat = theta_hat,
+      phi_hat = phi_hat,
       se = used_se,
       se_analytic = analytic_se,
       Cz = vapply(scores, function(x) unname(x$statistic), numeric(1)),
@@ -509,7 +542,8 @@
   }
 
   list(scores = scores, subject = input$subject,
-       theta_hat = theta_hat, eta_hat = eta_hat,
+       theta_hat = theta_hat, phi_hat = phi_hat, eta_hat = eta_hat,
+       V_ref = V_ref,
        precision = precision, theta_precision = theta_precision,
        eta_precision = eta_precision, effect_hat = effect_hat,
        effect_name = effect_name, method = method, var_method = var_method,
@@ -796,7 +830,8 @@ model {
   if (!requireNamespace("rstan", quietly = TRUE)) {
     stop("method='", method, "' requires the optional 'rstan' package.")
   }
-  precision_name <- if (effect_name == "eta") "P" else "V"
+  precision_name <- if (effect_name == "eta") "P" else if (
+    effect_name == "phi") "W" else "V"
   code <- .sft_stan_code(method, effect_name, precision_name)
   key <- paste0(method, "_", as.character(prior_tau_sd), "_", effect_name)
   model <- if (exists(key, envir = .sft_stan_model_cache, inherits = FALSE)) {
@@ -843,4 +878,3 @@ model {
   list(chain_array = chain_array, fit = fit,
        sampler_diagnostics = .sft_stan_sampler_diagnostics(fit, max_treedepth))
 }
-

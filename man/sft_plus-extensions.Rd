@@ -57,8 +57,8 @@ sictestBayes(HH, HL, LH, LL, method = c("DP", "IG"), model = NULL, nbin = NULL, 
 simulate_sft(model = c("lba", "ou"), n, p_vec, design = NULL, salience = FALSE, logical_rules = NULL, sics = FALSE, cdfs = FALSE, a_t = FALSE, subject = 1, backend = c("auto", "Rcpp", "R"), dt = .001, max_time = 2, bridge = TRUE, bridge_exp_cutoff = -20, adaptive = TRUE, adaptive_mode = c("ptol", "distance"), adapt_factor = 32, adapt_eps = 1.5, p_tol = 1e-8, curv_tol = .05, kappa = NULL, tau = NULL)
 simulate_sft_group(model = c("lba", "ou"), n, params, nSubjects = NULL, subject_ids = NULL, combine = TRUE, ...)
 smooth_one_cdf(t, y, smooth_cdf = "none", smooth_spar = .65)
-capacityGroup.bayes(inData, CR = NULL, stopping.rule = c("OR", "AND", "STST"), ndraws = 10000L, prior_shape = 2, prior_rate = 0.5, seed = NULL, hdi = .94, prior_mean = 0, prior_sd = 1, burnin = 1000L, thin = 1L, chains = 4L, rope = NULL, method = c("InvGamma", "HalfNormal", "Centered"), prior_tau_sd = 1, adapt_delta = .95, max_treedepth = 12L, stan_control = list(), tau2_prior_shape = NULL, tau2_prior_rate = NULL, Condition = NULL, Subject = NULL, score_method = c("score", "multiplicative"), var_method = c("analytic", "bootstrap"), n_boot = 2000L)
-ucip.bayes(inData, CR = NULL, stopping.rule = c("OR", "AND", "STST"), ndraws = 10000L, seed = NULL, hdi = .94, prior_mean = 0, prior_sd = 1, chains = 4L, rope = NULL, Condition = NULL, Subject = NULL, score_method = c("score", "multiplicative"), var_method = c("analytic", "bootstrap"), n_boot = 2000L)
+capacityGroup.bayes(inData, CR = NULL, stopping.rule = c("OR", "AND", "STST"), ndraws = 10000L, prior_shape = 2, prior_rate = 0.5, seed = NULL, hdi = .94, prior_mean = 0, prior_sd = 1, burnin = 1000L, thin = 1L, chains = 4L, rope = NULL, method = c("InvGamma", "HalfNormal", "Centered"), prior_tau_sd = 1, adapt_delta = .95, max_treedepth = 12L, stan_control = list(), tau2_prior_shape = NULL, tau2_prior_rate = NULL, Condition = NULL, Subject = NULL, score_method = c("score", "multiplicative", "standardized"), var_method = c("analytic", "bootstrap"), n_boot = 2000L)
+ucip.bayes(inData, CR = NULL, stopping.rule = c("OR", "AND", "STST"), ndraws = 10000L, seed = NULL, hdi = .94, prior_mean = 0, prior_sd = 1, chains = 4L, rope = NULL, Condition = NULL, Subject = NULL, score_method = c("score", "multiplicative", "standardized"), var_method = c("analytic", "bootstrap"), n_boot = 2000L)
 micGroup.bayes(inData, Condition = NULL, Subject = NULL, correct = TRUE, var_method = c("analytic", "bootstrap"), n_boot = 2000L, ndraws = 10000L, prior_shape = 2, prior_rate = 0.01, seed = NULL, hdi = .94, prior_mean = 0, prior_sd = 0.10, burnin = 1000L, thin = 1L, chains = 4L, rope = NULL, method = c("InvGamma", "HalfNormal", "Centered"), prior_tau_sd = 0.10, adapt_delta = .95, max_treedepth = 12L, stan_control = list(), tau2_prior_shape = NULL, tau2_prior_rate = NULL)
 }
 \arguments{
@@ -98,6 +98,11 @@ micGroup.bayes(inData, Condition = NULL, Subject = NULL, correct = TRUE, var_met
   \item{subject_ids}{Optional character vector of subject labels for \code{simulate_sft_group}. Defaults to the row names of \code{params} when present, otherwise zero-padded \code{"Subject001"}, \code{"Subject002"}, ... labels.}
   \item{combine}{For \code{simulate_sft_group}, whether to return one row-bound data frame (the default, directly usable by the group-level functions) or the list of per-subject \code{simulate_sft} results.}
   \item{stopping.rule}{The logical stopping rule for the UCIP Bayesian companion.}
+  \item{score_method}{Per-participant UCIP effect scale. \code{"score"} (default)
+    uses the raw score effect, \code{"multiplicative"} uses the log weighted
+    capacity ratio, and \code{"standardized"} uses the reference-information
+    \eqn{phi} score effect. The historical \code{"capacity"} aliases remain
+    accepted for \code{"multiplicative"}.}
   \item{ndraws, nsamp, maxn}{Monte Carlo sizes. Reduce these for exploratory work and increase them for final analyses.}
   \item{tolSIC, tolMIC, ci}{Model-classification tolerances and Monte Carlo interval mass for \code{sicDPtest}.}
   \item{prior_shape, prior_rate}{Shape and rate of the inverse-Gamma prior on between-subject variance \eqn{tau^2} in \code{capacityGroup.bayes}.}
@@ -108,7 +113,7 @@ micGroup.bayes(inData, Condition = NULL, Subject = NULL, correct = TRUE, var_met
   \item{burnin, thin, chains}{Gibbs sampler burn-in, thinning interval, and number of chains for \code{capacityGroup.bayes}.}
   \item{prior_tau_sd}{Positive scale of the half-normal prior on \eqn{tau} for the Stan methods.}
   \item{adapt_delta, max_treedepth, stan_control}{NUTS adaptation controls passed to the Stan methods.}
-  \item{rope}{Optional positive practical-equivalence threshold on the \eqn{theta} scale. If NULL, no ROPE probability is reported.}
+  \item{rope}{Optional positive practical-equivalence threshold on the active effect scale. For \code{score_method = "standardized"}, it is on the reference-information \eqn{phi} scale; if NULL, no ROPE probability is reported.}
   \item{hdi}{Credible interval mass for the UCIP posterior summary. Intervals are highest-density intervals.}
   \item{seed}{Optional reproducibility seed; the previous random-number state is restored on return.}
   \item{...}{Additional plotting or Bayesian-control arguments.}
@@ -188,8 +193,9 @@ micGroup.bayes(inData, Condition = NULL, Subject = NULL, correct = TRUE, var_met
   crediting the prior-to-posterior odds shift into that region; it is reported
   only when a \code{rope} is supplied. The point null suits the raw \code{score}
   effect and the dimensionless \code{multiplicative} (\eqn{eta}) effect; the
-  interval null suits \code{multiplicative} but not the information-referenced
-  raw \code{score}. \code{BF01} favours the null and \code{BF10} the alternative.
+  interval null suits \code{multiplicative} and \code{standardized}, but not
+  the information-referenced raw \code{score}. \code{BF01} favours the null and
+  \code{BF10} the alternative.
   Because the point-null Bayes factor depends on \code{prior_sd} (the
   Jeffreys-Lindley sensitivity), a diffuse alternative prior inflates the
   evidence for the null; interpret it together with the posterior summary.
@@ -199,7 +205,17 @@ micGroup.bayes(inData, Condition = NULL, Subject = NULL, correct = TRUE, var_met
   \code{"multiplicative"} models \eqn{eta_i = \log(A_i / B_i)}, the log weighted
   capacity ratio, with its delta-method precision. \code{"multiplicative"} was
   formerly named \code{"capacity"}, which (with \code{"logcapacity"} and
-  \code{"eta"}) is still accepted as an alias.
+  \code{"eta"}) is still accepted as an alias. \code{"standardized"} models
+  the reference-information score effect \eqn{phi_i = (U_i/V_i)\sqrt{V_ref}},
+  where \eqn{V_ref = median(V_i)} is computed over the participants retained
+  for the fit. Its observation precision is \eqn{V_i/V_ref}, so the frequentist
+  \code{Cz} statistic is unchanged and the effect is invariant to a common
+  rescaling of score weights. One \eqn{phi}-unit is a one-\code{Cz}-unit shift
+  for a participant with median information, making the alternative prior and
+  interval null coherent. This remains an information-referenced statistical
+  scale, not a physical response-time scale. With a \code{rope},
+  \code{"standardized"} reports both \code{point_null} and
+  \code{interval_null} Bayes factors.
 
   \code{micGroup.bayes} is the mean-interaction-contrast companion. It reads the
   salience \eqn{2\times2} cells from \code{Channel1} and \code{Channel2}

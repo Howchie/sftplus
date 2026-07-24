@@ -139,6 +139,77 @@ test_that("Bayes factors are matched to each effect scale", {
                mean(abs(g_mult$draws$mu) < 0.1))
 })
 
+test_that("standardized score uses a reference-information phi scale", {
+  set.seed(20260724)
+  rt <- lapply(1:4, function(i) {
+    list(rexp(55, 2 + i / 10), rexp(55, 1.8 + i / 12),
+         rexp(55, 1.6 + i / 14))
+  })
+  cr <- lapply(rt, function(x) lapply(x, function(z) rep(TRUE, length(z))))
+  names(rt) <- names(cr) <- paste0("P", 1:4)
+  input <- list(RT = rt, CR = cr, subject = names(rt))
+
+  raw <- sftplus:::.sft_ucip_score_data(input, "OR", method = "score")
+  std <- sftplus:::.sft_ucip_score_data(input, "OR", method = "standardized")
+  v_ref <- stats::median(raw$score$V)
+
+  expect_identical(std$effect_name, "phi")
+  expect_equal(std$V_ref, v_ref)
+  expect_equal(std$phi_hat, std$theta_hat * sqrt(v_ref))
+  expect_equal(std$precision, raw$score$V / v_ref)
+  expect_equal(std$score$V_ref, rep(v_ref, nrow(std$score)))
+  expect_equal(std$score$phi_hat, std$theta_hat * sqrt(v_ref))
+  expect_equal(std$score$Cz, raw$score$Cz, tolerance = 1e-12)
+  expect_equal(std$score$Cz,
+               vapply(rt, function(x) unname(ucip.test(x)$statistic), numeric(1)),
+               tolerance = 1e-12)
+  expect_false(isTRUE(all.equal(std$effect_hat, raw$effect_hat)))
+  expect_equal(std$score$Cz, vapply(std$scores, function(x) unname(x$statistic), numeric(1)),
+               tolerance = 1e-12)
+
+  # A single participant has V_ref = V, so phi is exactly its Cz and its
+  # analytic observation precision is one.
+  one <- sftplus:::.sft_ucip_score_data(
+    list(RT = list(rt[[1L]]), CR = list(cr[[1L]]), subject = "P1"),
+    "OR", method = "standardized"
+  )
+  expect_equal(one$phi_hat, one$score$Cz)
+  expect_equal(one$precision, 1)
+
+  # Common rescaling of U and V (as induced by a common score-weight scale)
+  # leaves the reference-information effect unchanged.
+  u_scaled <- 3 * std$score$U
+  v_scaled <- 9 * std$score$V
+  expect_equal(u_scaled / v_scaled * sqrt(stats::median(v_scaled)), std$phi_hat)
+
+  # The standardized bootstrap is on the phi scale as well.
+  boot <- sftplus:::.sft_ucip_score_data(
+    list(RT = list(rt[[1L]]), CR = list(cr[[1L]]), subject = "P1"),
+    "OR", method = "standardized", var_method = "bootstrap", n_boot = 100
+  )
+  expect_true("se_analytic" %in% names(boot$score))
+  expect_true(is.finite(boot$precision))
+})
+
+test_that("standardized score reports both Bayes factors", {
+  set.seed(20260725)
+  rt <- lapply(1:3, function(i) {
+    list(rexp(45, 2), rexp(45, 1.8), rexp(45, 1.6))
+  })
+  names(rt) <- paste0("P", 1:3)
+  raw <- capacityGroup.bayes(rt, score_method = "score", rope = .1,
+                             ndraws = 300, burnin = 80, chains = 2, seed = 11)
+  std <- capacityGroup.bayes(rt, score_method = "standardized", rope = .1,
+                             ndraws = 300, burnin = 80, chains = 2, seed = 11)
+  expect_named(std$bayes_factor, c("point_null", "interval_null"))
+  expect_equal(std$bayes_factor$interval_null$delta, .1)
+  expect_equal(std$score$Cz, raw$score$Cz, tolerance = 1e-12)
+  expect_false(isTRUE(all.equal(std$bayes_factor$point_null$BF01,
+                                raw$bayes_factor$point_null$BF01)))
+  expect_identical(std$model$interpretation,
+                   "phi is the reference-information standardized score effect (Cz for a participant with median information)")
+})
+
 test_that("single-subject UCIP Bayesian companion uses the analytic posterior", {
   set.seed(104)
   rt <- list(rexp(30, 2), rexp(30, 1.8), rexp(30, 1.6))

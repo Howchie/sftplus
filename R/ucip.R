@@ -32,12 +32,14 @@
   switch(key,
          score = "score", theta = "score",
          multiplicative = "multiplicative", logratio = "multiplicative",
+         standardized = "standardized", std = "standardized",
+         referenceinformation = "standardized", phi = "standardized",
          # "capacity" and its variants are retained as back-compatible aliases:
          # the eta = log(A/B) method was renamed because "capacity" names the
          # whole analysis (capacityGroup.bayes, capacity.or).
          capacity = "multiplicative", logcapacity = "multiplicative",
          eta = "multiplicative",
-         stop("score_method must be one of 'score' or 'multiplicative'."))
+         stop("score_method must be one of 'score', 'multiplicative', or 'standardized'."))
 }
 
 
@@ -217,4 +219,3 @@ ucip.id.test <- function(dt.rt, nt.rt, st.rts, dt.cr = NULL, nt.cr = NULL, st.cr
              "response times are different than those predicted by the adjusted UCIP-AND model",
              "Houpt-Townsend UCIP test")
 }
-
