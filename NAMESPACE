@@ -5,12 +5,11 @@ export(estimate.bounds, assessment, assessmentGroup, fPCAassessment, fPCAcapacit
        estimateUCIPand, sic, sicGroup, sicGroupBF, sicDPtest, sictestBayes, ucip.test,
        ucip.id.test, siDominance, capacityGroup.bayes, ucip.bayes, micGroup.bayes,
        resilience, resilience.test,
-       simulate_sft, simulate_sft_group, LogicalRules_rfun_lba, LogicalRules_OU_rfun,
-       LogicalRules_OU_rfun_R, LogicalRules_OU_rfun_Rcpp, correctfun,
+       simulate_sft, simulate_sft_group, correctfun,
        assessment_ta_or, assessment_ta_and, assessment_donkin_discrimination,
        build_ct_df, build_sic_df,
        build_at_df, build_cdf_df, get_time_range, smooth_one_cdf,
-       plot_altieri, find_equal_vc_yes, semiparametricSFT.bayes, mic.bayes, sic.bayes,
+       find_equal_vc_yes, semiparametricSFT.bayes, mic.bayes, sic.bayes,
        sft_data_to_rt)
 S3method(print, sft_bayes)
 

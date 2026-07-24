@@ -30,16 +30,15 @@
 .sft_score_method <- function(method) {
   key <- tolower(gsub("[^A-Za-z]", "", as.character(method[[1L]])))
   switch(key,
-         score = "score", theta = "score",
-         multiplicative = "multiplicative", logratio = "multiplicative",
          standardized = "standardized", std = "standardized",
          referenceinformation = "standardized", phi = "standardized",
+         multiplicative = "multiplicative", logratio = "multiplicative",
          # "capacity" and its variants are retained as back-compatible aliases:
          # the eta = log(A/B) method was renamed because "capacity" names the
          # whole analysis (capacityGroup.bayes, capacity.or).
          capacity = "multiplicative", logcapacity = "multiplicative",
          eta = "multiplicative",
-         stop("score_method must be one of 'score', 'multiplicative', or 'standardized'."))
+         stop("score_method must be one of 'standardized' or 'multiplicative'."))
 }
 
 

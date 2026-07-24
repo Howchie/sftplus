@@ -68,7 +68,7 @@ test_that("hierarchical UCIP Bayesian companion uses score information", {
   expect_equal(nrow(ans$posterior_predictive$draws), 400)
 })
 
-test_that("log-capacity and score scales agree near the UCIP model", {
+test_that("standardized and multiplicative scales track the UCIP Cz", {
   # For OR, independent exponential A/B times imply an AB minimum with rate
   # lambda_A + lambda_B, so this is a direct UCIP data-generating case.
   set.seed(20260723)
@@ -76,21 +76,26 @@ test_that("log-capacity and score scales agree near the UCIP model", {
   cr <- lapply(rt, function(x) rep(TRUE, length(x)))
   score <- sftplus:::.sft_ucip_score(rt, cr, stopping.rule = "OR")
   input <- list(RT = list(rt), CR = list(cr), subject = "P1")
-  score_data <- sftplus:::.sft_ucip_score_data(
-    input, "OR", method = "score"
+  std_data <- sftplus:::.sft_ucip_score_data(
+    input, "OR", method = "standardized"
   )
   capacity_data <- sftplus:::.sft_ucip_score_data(
     input, "OR", method = "multiplicative"
   )
 
-  # Both paths reuse the same score decomposition; only the observation
-  # scale and precision differ.
-  expect_equal(score_data$theta_hat, score$numer / score$variance)
-  expect_equal(score_data$precision, score$variance)
+  # Both paths reuse the same score decomposition; only the observation scale
+  # and precision differ. A single subject has V_ref = V, so phi = Cz and its
+  # standardized observation precision is one.
+  expect_equal(std_data$theta_hat, score$numer / score$variance)
+  expect_equal(std_data$effect_hat, std_data$theta_hat * sqrt(std_data$V_ref))
+  expect_equal(std_data$precision, 1)
   expect_equal(capacity_data$eta_hat, score$log_capacity)
   expect_equal(capacity_data$precision, score$log_capacity_precision)
 
+  # The standardized phi z-score is exactly the UCIP Cz; the eta z-score tracks it.
+  phi_z <- std_data$effect_hat * sqrt(std_data$precision)
   eta_z <- capacity_data$eta_hat * sqrt(capacity_data$precision)
+  expect_equal(phi_z, unname(score$statistic), tolerance = 1e-8)
   expect_equal(eta_z, unname(score$statistic), tolerance = 0.25)
 
   # "capacity" (and eta/logcapacity) are retained as back-compatible aliases of
@@ -112,22 +117,22 @@ test_that("Bayes factors are matched to each effect scale", {
   CR <- lapply(subs, `[[`, "CR")
   names(RT) <- paste0("P", seq_along(RT))
 
-  # Raw score scale: exact point null only (no meaningful ROPE, so no interval).
-  g_score <- capacityGroup.bayes(RT, CR, stopping.rule = "OR",
-                                 score_method = "score", rope = 0.05,
-                                 ndraws = 4000, burnin = 500, chains = 4, seed = 7)
-  expect_named(g_score$bayes_factor, "point_null")
-  expect_match(g_score$bayes_factor$point_null$estimator, "Rao-Blackwell")
-  expect_equal(g_score$bayes_factor$point_null$BF10,
-               1 / g_score$bayes_factor$point_null$BF01)
+  # Standardized phi scale: an exact point null plus (with a ROPE) an interval null.
+  g_std <- capacityGroup.bayes(RT, CR, stopping.rule = "OR",
+                               score_method = "standardized", rope = 0.05,
+                               ndraws = 4000, burnin = 500, chains = 4, seed = 7)
+  expect_named(g_std$bayes_factor, c("point_null", "interval_null"))
+  expect_match(g_std$bayes_factor$point_null$estimator, "Rao-Blackwell")
+  expect_equal(g_std$bayes_factor$point_null$BF10,
+               1 / g_std$bayes_factor$point_null$BF01)
 
   # The Rao-Blackwellised density at zero matches a KDE of the marginal mu draws.
-  mu <- g_score$draws$mu
+  mu <- g_std$draws$mu
   post_kde <- stats::approx(stats::density(mu, n = 4096), xout = 0)$y
-  expect_equal(g_score$bayes_factor$point_null$posterior_density_at_null,
+  expect_equal(g_std$bayes_factor$point_null$posterior_density_at_null,
                post_kde, tolerance = 0.1)
-  expect_equal(g_score$bayes_factor$point_null$prior_density_at_null,
-               stats::dnorm(0, 0, g_score$prior$mu$sd))
+  expect_equal(g_std$bayes_factor$point_null$prior_density_at_null,
+               stats::dnorm(0, 0, g_std$prior$mu$sd))
 
   # Multiplicative (eta) scale: both the point and interval nulls apply.
   g_mult <- capacityGroup.bayes(RT, CR, stopping.rule = "OR",
@@ -149,21 +154,20 @@ test_that("standardized score uses a reference-information phi scale", {
   names(rt) <- names(cr) <- paste0("P", 1:4)
   input <- list(RT = rt, CR = cr, subject = names(rt))
 
-  raw <- sftplus:::.sft_ucip_score_data(input, "OR", method = "score")
   std <- sftplus:::.sft_ucip_score_data(input, "OR", method = "standardized")
-  v_ref <- stats::median(raw$score$V)
+  v_ref <- stats::median(std$score$V)
 
   expect_identical(std$effect_name, "phi")
   expect_equal(std$V_ref, v_ref)
   expect_equal(std$phi_hat, std$theta_hat * sqrt(v_ref))
-  expect_equal(std$precision, raw$score$V / v_ref)
+  expect_equal(std$precision, std$score$V / v_ref)
   expect_equal(std$score$V_ref, rep(v_ref, nrow(std$score)))
   expect_equal(std$score$phi_hat, std$theta_hat * sqrt(v_ref))
-  expect_equal(std$score$Cz, raw$score$Cz, tolerance = 1e-12)
   expect_equal(std$score$Cz,
-               vapply(rt, function(x) unname(ucip.test(x)$statistic), numeric(1)),
+               unname(vapply(rt, function(x) unname(ucip.test(x)$statistic), numeric(1))),
                tolerance = 1e-12)
-  expect_false(isTRUE(all.equal(std$effect_hat, raw$effect_hat)))
+  # phi differs from the raw score effect theta whenever V_ref != 1.
+  expect_false(isTRUE(all.equal(std$effect_hat, std$theta_hat)))
   expect_equal(std$score$Cz, vapply(std$scores, function(x) unname(x$statistic), numeric(1)),
                tolerance = 1e-12)
 
@@ -197,17 +201,28 @@ test_that("standardized score reports both Bayes factors", {
     list(rexp(45, 2), rexp(45, 1.8), rexp(45, 1.6))
   })
   names(rt) <- paste0("P", 1:3)
-  raw <- capacityGroup.bayes(rt, score_method = "score", rope = .1,
-                             ndraws = 300, burnin = 80, chains = 2, seed = 11)
   std <- capacityGroup.bayes(rt, score_method = "standardized", rope = .1,
                              ndraws = 300, burnin = 80, chains = 2, seed = 11)
   expect_named(std$bayes_factor, c("point_null", "interval_null"))
   expect_equal(std$bayes_factor$interval_null$delta, .1)
-  expect_equal(std$score$Cz, raw$score$Cz, tolerance = 1e-12)
-  expect_false(isTRUE(all.equal(std$bayes_factor$point_null$BF01,
-                                raw$bayes_factor$point_null$BF01)))
+  expect_equal(std$score$Cz,
+               unname(vapply(rt, function(x) unname(ucip.test(x)$statistic), numeric(1))),
+               tolerance = 1e-12)
   expect_identical(std$model$interpretation,
                    "phi is the reference-information standardized score effect (Cz for a participant with median information)")
+})
+
+test_that("the redundant raw-score scale is removed", {
+  # "score"/"theta" were dropped: the standardized phi scale is the same model
+  # in interpretable units, so only "standardized" and "multiplicative" remain.
+  expect_error(sftplus:::.sft_score_method("score"),
+               "'standardized' or 'multiplicative'")
+  expect_error(sftplus:::.sft_score_method("theta"),
+               "'standardized' or 'multiplicative'")
+  rt <- lapply(1:2, function(i) list(rexp(20, 2), rexp(20, 1.8), rexp(20, 1.6)))
+  expect_error(capacityGroup.bayes(rt, score_method = "score", ndraws = 120,
+                                   burnin = 30, chains = 2, seed = 8),
+               "'standardized' or 'multiplicative'")
 })
 
 test_that("single-subject UCIP Bayesian companion uses the analytic posterior", {
@@ -216,12 +231,14 @@ test_that("single-subject UCIP Bayesian companion uses the analytic posterior", 
   ans <- capacityGroup.bayes(rt, ndraws = 400, chains = 2, seed = 7,
                          prior_mean = .2, prior_sd = .8, rope = .05)
   score <- ans$score
-  post_var <- 1 / (score$V + 1 / .8^2)
-  post_mean <- post_var * (score$V * score$theta_hat + .2 / .8^2)
+  # The default standardized scale gives a single subject phi = Cz and an
+  # analytic observation precision of one.
+  post_var <- 1 / (1 + 1 / .8^2)
+  post_mean <- post_var * (score$phi_hat + .2 / .8^2)
   expect_identical(ans$method_code, "Analytic")
   expect_null(ans$population_summary)
   expect_false(any(c("mu", "tau") %in% names(ans$draws)))
-  expect_equal(ans$summary$parameter, "theta[1]")
+  expect_equal(ans$summary$parameter, "phi[1]")
   expect_equal(ans$summary$mean, post_mean, tolerance = .08)
   expect_equal(nrow(ans$draws), 800)
   expect_equal(ans$score$Cz, ucip.test(rt)$statistic[[1]])

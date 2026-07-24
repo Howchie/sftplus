@@ -252,6 +252,7 @@ sic <- function(HH, HL, LH, LL, domtest = "ks", sictest = "ks",
 sicGroup <- function(inData, sictest = c("ks", "bf"), mictest = c("art", "anova"),
                      domtest = c("ks", "dp"), alpha.sic = .05, plotSIC = TRUE,
                      ...) {
+  inData <- .sft_normalize_columns(inData)
   sictest <- match.arg(sictest); domtest <- match.arg(domtest); mictest <- match.arg(mictest)
   req <- c("Subject", "Condition", "RT", "Correct", "Channel1", "Channel2")
   if (!all(req %in% names(inData))) stop("inData is missing required SIC columns.")
@@ -289,4 +290,3 @@ sicGroup <- function(inData, sictest = c("ks", "bf"), mictest = c("art", "anova"
 sicGroupBF <- function(inData, domtest = "ks", plotSIC = TRUE, ...) {
   sicGroup(inData, sictest = "bf", domtest = domtest, plotSIC = plotSIC, ...)
 }
-

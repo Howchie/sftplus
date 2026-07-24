@@ -144,6 +144,7 @@
 
 .sft_bayes_validate_input <- function(data, Condition = NULL, cell_mapping = NULL,
                                       salience_split = NULL) {
+  data <- .sft_normalize_columns(data)
   if (!is.data.frame(data)) stop("data must be a data.frame.", call. = FALSE)
   required <- c("Subject", "Condition", "RT", "Correct", "Channel1", "Channel2")
   missing <- setdiff(required, names(data))
@@ -592,4 +593,3 @@
        refresh = refresh, control = list(adapt_delta = adapt_delta,
                                          max_treedepth = max_treedepth))
 }
-

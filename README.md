@@ -55,6 +55,11 @@ internally to extract `AB`, `A`, and `B` (or STST context/target) cells; for
 multiple subjects, `capacityGroup.bayes()` performs the corresponding hierarchical
 conversion automatically.
 
+All row-wise data-frame entry points use the same canonical names and aliases:
+`RT` may be supplied as `rt`, `Subject` as `subjects`, and `Condition` as
+`LogicalRule`. Canonical names take precedence if both a canonical column and
+one of its aliases are present.
+
 The LBA simulator also supports an optional shared-capacity fluctuation on
 double-target (`AB`) trials. Set `kappa` and `tau` in `p_vec` (or pass them
 directly to `simulate_sft()`):
@@ -72,4 +77,19 @@ For each AB trial, one `Z ~ N(0, 1)` is drawn and the two target drifts use
 target multiplier and `tau` controls shared trial-to-trial co-fluctuation;
 the nontargets and non-AB cells are unchanged. The existing additive
 `capacity_target` modifier can be used at the same time. Defaults are
-`kappa = 1` and `tau = 0`.
+`kappa = 1` and `tau = 0` (`rho` is accepted as an alias for `tau`).
+
+`simulate_sft()` defaults to the parallel architecture. Serial simulations can
+be requested with `architecture = "serial"`. Select
+`serial_mode = "self-terminating"` (the default for serial calls) or
+`serial_mode = "exhaustive"`, and choose `serial_order = "A"`, `"B"`, or
+`"random"`. Random order checks channel A first on a proportion `p_A_first`
+(default `0.5`) of trials. Self-terminating OR trials stop at the first target
+or after both absences; explicitly requested self-terminating AND trials stop
+at the first absence or after both targets. Serial exhaustive trials complete
+both channels in sequence. Serial self-termination is currently available for
+OR and AND (the default serial self-terminating logical rule is OR); use
+exhaustive processing for ID data. Since serial channels do not run
+concurrently, LBA capacity/shared-capacity modifiers (including `kappa` and
+the `tau`/`rho` fluctuation parameter) and OU cross-channel interaction
+parameters are set to zero in serial runs.

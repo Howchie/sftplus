@@ -1,4 +1,5 @@
 fPCAcapacity <- function(sftData, dimensions, acc.cutoff=.75, OR=NULL, stopping.rule=c("OR", "AND", "STST"), ratio=TRUE, register=c("median","mean","none"), plotPCs=FALSE, ...) {
+  sftData <- .sft_normalize_columns(sftData)
   subjects <- sort(unique(sftData$Subject))
   subjects <- factor(subjects)
   nsubjects <- length(subjects)

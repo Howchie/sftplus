@@ -2,3 +2,5 @@
 ^\.gitignore$
 ^\.Rbuildignore$
 ^Rplots\.pdf$
+^sftbayes$
+^\.Rtmp$

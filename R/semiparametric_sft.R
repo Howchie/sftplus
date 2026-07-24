@@ -21,7 +21,9 @@
 #' the complete preparation stage.
 #'
 #' @param inData Canonical SFT data frame. `data` and `sftData` are accepted
-#'   aliases for backward compatibility.
+#'   aliases for backward compatibility. Within the data frame, `rt`,
+#'   `subjects`, and `LogicalRule` are accepted as aliases for `RT`, `Subject`,
+#'   and `Condition`.
 #' @param Condition Optional condition value or values to retain.
 #' @param n_bins Requested number of pooled RT intervals.
 #' @param rt_units Input RT units, either seconds or milliseconds.
@@ -361,4 +363,3 @@ sic.bayes <- function(object, ...) {
   stop("sic.bayes() needs a fitted sft_bayes object or a canonical SFT data frame.",
        call. = FALSE)
 }
-

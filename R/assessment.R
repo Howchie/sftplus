@@ -1,6 +1,7 @@
 assessmentGroup <- function(inData, stopping.rule=c("OR", "AND", "STST"), 
                             correct=c(TRUE, FALSE), fast=c(TRUE,FALSE), 
                             detection=TRUE, plotAt=TRUE, ...) {
+  inData <- .sft_normalize_columns(inData)
   subjects <- sort(unique(inData$Subject))
   subjects <- factor(subjects)
   nsubjects <- length(subjects)

@@ -8,10 +8,10 @@
 ucip.bayes <- function(inData, CR = NULL,
                        stopping.rule = c("OR", "AND", "STST"),
                        ndraws = 10000L, seed = NULL,
-                       hdi = .94, prior_mean = 0, prior_sd = 1,
+                       hdi = .94, prior_mean = 0, prior_sd = NULL,
                        chains = 4L, rope = NULL,
                        Condition = NULL, Subject = NULL,
-                       score_method = c("score", "multiplicative", "standardized"),
+                       score_method = c("standardized", "multiplicative"),
                        var_method = c("analytic", "bootstrap"), n_boot = 2000L) {
   stopping.rule <- match.arg(stopping.rule)
   score_method <- .sft_score_method(score_method)
@@ -34,22 +34,26 @@ ucip.bayes <- function(inData, CR = NULL,
   on.exit(.sft_restore_bayes_seed(old_seed), add = TRUE)
   scored <- .sft_ucip_score_data(input, stopping.rule, score_method,
                                  var_method = var_method, n_boot = n_boot)
+  # A NULL prior_sd resolves to the scale-aware default for this score_method
+  # (anchored on the standardized reference-information phi scale); an explicit
+  # value is kept as supplied.
+  prior_sd <- .sft_resolve_priors(score_method, scored$V_ref,
+                                  prior_sd = prior_sd)$prior_sd
   effect_hat <- scored$effect_hat[[1L]]
   precision <- scored$precision[[1L]]
   effect_name <- scored$effect_name
   observed_name <- paste0(effect_name, "_hat")
-  precision_name <- if (score_method == "multiplicative") "P" else if (
-    score_method == "standardized") "W" else "V"
+  precision_name <- if (score_method == "multiplicative") "P" else "W"
 
   fit <- .sft_normal_analytic_fit(effect_hat, precision, input$subject[[1L]],
                                   effect_name, ndraws, chains, prior_mean,
                                   prior_sd, hdi, rope)
-  # An exact point null (effect = 0 is the UCIP prediction) applies on every
-  # score scale. The standardized phi scale also has a coherent interval null
-  # because one unit is a Cz shift for a median-information participant.
+  # An exact point null (effect = 0 is the UCIP prediction) applies on both
+  # scales, and both also carry a coherent interval null: one standardized phi
+  # unit is a Cz shift for a median-information participant, and eta = log(A/B)
+  # has an interpretable capacity-ratio ROPE.
   bayes_factor <- .sft_analytic_bayes_factor(
-    fit, prior_mean, prior_sd, rope,
-    point = TRUE, interval = score_method %in% c("multiplicative", "standardized"))
+    fit, prior_mean, prior_sd, rope, point = TRUE, interval = TRUE)
   effect_draws <- fit$effect_draws
   subject_parameter <- fit$subject_parameter
   summary <- fit$summary
@@ -90,10 +94,8 @@ ucip.bayes <- function(inData, CR = NULL,
                         effect_name),
       interpretation = if (score_method == "multiplicative") {
         "exp(eta) is the participant weighted capacity ratio"
-      } else if (score_method == "standardized") {
-        "phi is the reference-information standardized score effect (Cz for a participant with median information)"
       } else {
-        "theta is the unstandardised score-effect parameter"
+        "phi is the reference-information standardized score effect (Cz for a participant with median information)"
       },
       score_method = score_method,
       var_method = var_method,
@@ -107,31 +109,33 @@ ucip.bayes <- function(inData, CR = NULL,
 
 
 # Hierarchical Bayesian companion to the UCIP/Cz score test. The default
-# score_method = "score" preserves the original U/V score-effect model;
-# score_method = "multiplicative" uses eta = log(A/B) with its delta-method
-# precision (formerly "capacity", still accepted as an alias);
-# score_method = "standardized" uses the reference-information phi scale. The
-# InvGamma method is the exact conjugate Gibbs sampler.
-# HalfNormal is a non-centred Stan model and Centered is its centred Stan
-# counterpart; both use a half-normal prior on tau.
+# score_method = "standardized" pools the reference-information phi scale (a Cz
+# shift for a median-information participant); score_method = "multiplicative"
+# uses eta = log(A/B) with its delta-method precision (formerly "capacity",
+# still accepted as an alias). The InvGamma method is the exact conjugate Gibbs
+# sampler; HalfNormal is a non-centred Stan model and Centered is its centred
+# Stan counterpart, both with a half-normal prior on tau.
 #
 # prior_mean stays at 0: the population score-effect prior is centred on the
 # UCIP benchmark (mu = 0 == unlimited-capacity independent parallel). The
-# InvGamma(prior_shape, prior_rate) prior on the between-subject variance tau^2
-# defaults to shape 2, rate 0.5 (prior mean tau^2 = 0.5), a weakly informative
-# choice that keeps more mass at small tau than the old rate = 1 and better
-# matches the half-Normal(0, 1) tau prior used by the Stan variants.
+# remaining prior widths (prior_sd on mu, prior_tau_sd / prior_shape / prior_rate
+# on the between-subject scale tau) default to NULL and are resolved to
+# scale-aware values by .sft_default_priors() once the data are scored: the
+# standardized phi scale is the anchor (mu ~ N(0, 0.5^2), tau ~ HalfNormal(0, 1),
+# tau^2 ~ InvGamma(2, 0.5)) and the multiplicative scale carries the locally
+# corresponding widths. Supplying any of these arguments explicitly overrides
+# its default.
 capacityGroup.bayes <- function(inData, CR = NULL, stopping.rule = c("OR", "AND", "STST"),
-                            ndraws = 10000L, prior_shape = 2, prior_rate = 0.5,
+                            ndraws = 10000L, prior_shape = NULL, prior_rate = NULL,
                             seed = NULL, hdi = .94, prior_mean = 0,
-                            prior_sd = 1, burnin = 1000L, thin = 1L,
+                            prior_sd = NULL, burnin = 1000L, thin = 1L,
                             chains = 4L, rope = NULL,
                             method = c("InvGamma", "HalfNormal", "Centered"),
-                            prior_tau_sd = 1, adapt_delta = .95,
+                            prior_tau_sd = NULL, adapt_delta = .95,
                             max_treedepth = 12L, stan_control = list(),
                             tau2_prior_shape = NULL, tau2_prior_rate = NULL,
                             Condition = NULL, Subject = NULL,
-                            score_method = c("score", "multiplicative", "standardized"),
+                            score_method = c("standardized", "multiplicative"),
                             var_method = c("analytic", "bootstrap"), n_boot = 2000L) {
   stopping.rule <- match.arg(stopping.rule)
   score_method <- .sft_score_method(score_method)
@@ -179,8 +183,17 @@ capacityGroup.bayes <- function(inData, CR = NULL, stopping.rule = c("OR", "AND"
   precision <- scored$precision
   effect_name <- scored$effect_name
   observed_name <- paste0(effect_name, "_hat")
-  precision_name <- if (score_method == "multiplicative") "P" else if (
-    score_method == "standardized") "W" else "V"
+  precision_name <- if (score_method == "multiplicative") "P" else "W"
+
+  # Resolve any NULL prior hyperparameter to its scale-aware default now that
+  # V_ref is known; explicit user values (including the tau2_prior_* aliases
+  # applied above) pass through unchanged.
+  priors <- .sft_resolve_priors(score_method, scored$V_ref, prior_sd,
+                                prior_tau_sd, prior_shape, prior_rate)
+  prior_sd <- priors$prior_sd
+  prior_tau_sd <- priors$prior_tau_sd
+  prior_shape <- priors$prior_shape
+  prior_rate <- priors$prior_rate
 
   fit <- .sft_normal_hierarchy_fit(effect_hat, precision, input$subject,
                                    effect_name, method, ndraws, burnin, thin,
@@ -202,12 +215,11 @@ capacityGroup.bayes <- function(inData, CR = NULL, stopping.rule = c("OR", "AND"
   stan_fit <- fit$stan_fit
   sampler_diagnostics <- fit$sampler_diagnostics
   # UCIP is an exact theoretical prediction, so the population mean carries a
-  # point null (mu = 0); the interval null also applies to the standardized
-  # reference-information phi effect, whose ROPE is interpretable in Cz units
-  # for a median-information participant.
+  # point null (mu = 0); the interval null applies on both scales, whose ROPEs
+  # are interpretable (a Cz shift for a median-information participant on the
+  # standardized phi scale, a capacity ratio on the multiplicative eta scale).
   bayes_factor <- .sft_hierarchy_bayes_factor(
-    fit, prior_mean, prior_sd, rope,
-    point = TRUE, interval = score_method %in% c("multiplicative", "standardized"))
+    fit, prior_mean, prior_sd, rope, point = TRUE, interval = TRUE)
   prior <- if (method == "InvGamma") {
     list(mu = list(mean = prior_mean, sd = prior_sd),
          tau2 = list(family = "inverse-Gamma", shape = prior_shape,
@@ -223,10 +235,8 @@ capacityGroup.bayes <- function(inData, CR = NULL, stopping.rule = c("OR", "AND"
          population = "mu ~ Normal(mean = prior_mean, sd = prior_sd)",
          interpretation = if (score_method == "multiplicative") {
            "exp(eta[i]) is the participant weighted capacity ratio"
-         } else if (score_method == "standardized") {
-           "phi is the reference-information standardized score effect (Cz for a participant with median information)"
          } else {
-           "theta[i] is the participant unstandardised score-effect parameter"
+           "phi is the reference-information standardized score effect (Cz for a participant with median information)"
          },
          score_method = score_method, var_method = var_method,
          parameterization = "centered", sampler = "conjugate Gibbs")
@@ -237,10 +247,8 @@ capacityGroup.bayes <- function(inData, CR = NULL, stopping.rule = c("OR", "AND"
          population = "mu ~ Normal(mean = prior_mean, sd = prior_sd)",
          interpretation = if (score_method == "multiplicative") {
            "exp(eta[i]) is the participant weighted capacity ratio"
-         } else if (score_method == "standardized") {
-           "phi is the reference-information standardized score effect (Cz for a participant with median information)"
          } else {
-           "theta[i] is the participant unstandardised score-effect parameter"
+           "phi is the reference-information standardized score effect (Cz for a participant with median information)"
          },
          score_method = score_method, var_method = var_method,
          tau = "tau ~ HalfNormal(prior_tau_sd)",

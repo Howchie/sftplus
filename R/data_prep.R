@@ -93,6 +93,42 @@
 }
 
 
+# Canonical names used by the row-wise SFT APIs and the aliases accepted when
+# data come from external workflows.  Keep this mapping in one place so every
+# data-frame entry point (frequentist, Bayesian, and conversion helpers) has
+# identical column-name behaviour.
+.sft_column_aliases <- list(
+  RT = c("rt"),
+  Subject = c("subjects"),
+  Condition = c("LogicalRule")
+)
+
+
+# Rename aliases to their canonical names when the canonical column is absent.
+# Canonical names take precedence when both names are supplied; retaining the
+# alias column in that case is intentional so this helper never discards user
+# data.  Multiple aliases for the same missing canonical column are rejected
+# rather than selected arbitrarily.
+.sft_normalize_columns <- function(data, aliases = .sft_column_aliases) {
+  if (!is.data.frame(data)) return(data)
+  if (is.null(names(data)) || anyNA(names(data)) || any(!nzchar(names(data)))) {
+    stop("data must have non-empty column names.", call. = FALSE)
+  }
+  for (canonical in names(aliases)) {
+    if (canonical %in% names(data)) next
+    hits <- intersect(aliases[[canonical]], names(data))
+    if (length(hits) > 1L) {
+      stop("data contains multiple aliases for the '", canonical,
+           "' column: ", paste(hits, collapse = ", "), call. = FALSE)
+    }
+    if (length(hits) == 1L) {
+      names(data)[match(hits[[1L]], names(data))] <- canonical
+    }
+  }
+  data
+}
+
+
 #' Convert canonical row-wise SFT data to RT/CR list input.
 #'
 #' The list-based SFT estimators historically accept one response-time vector
@@ -106,6 +142,8 @@
 #'
 #' @param data A data frame containing `Subject`, `RT`, `Correct`, `Channel1`,
 #'   and `Channel2`; `Condition` is optional when only one condition is used.
+#'   The aliases `subjects`, `rt`, and `LogicalRule` are accepted for
+#'   `Subject`, `RT`, and `Condition`, respectively.
 #' @param Condition Optional single condition value to retain.  If omitted,
 #'   the data must contain one condition (or no `Condition` column).
 #' @param Subject Optional subject value or values to retain.
@@ -120,6 +158,7 @@ sft_data_to_rt <- function(data, Condition = NULL, Subject = NULL,
                            stopping.rule = c("OR", "AND", "STST"),
                            by_subject = c("auto", "always", "never"),
                            include_nn = FALSE) {
+  data <- .sft_normalize_columns(data)
   if (!is.data.frame(data)) stop("data must be a data.frame.", call. = FALSE)
   rule <- match.arg(stopping.rule)
   by_subject <- match.arg(by_subject)
@@ -263,4 +302,3 @@ row_to_pvec <- function(df_row) {
 
 
 .safe_ecdf <- .sft_ecdf
-

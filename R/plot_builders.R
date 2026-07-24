@@ -105,25 +105,3 @@ get_time_range <- function(rt_list, probs = c(.05, .95), by = .001) {
   seq(lo, hi, by = by)
 }
 
-
-plot_altieri <- function(n, p_vec, smooth_cdf = c("none", "mono", "spline"), smooth_spar = .65) {
-  if (!requireNamespace("ggplot2", quietly = TRUE)) stop("plot_altieri() requires ggplot2.")
-  smooth_cdf <- match.arg(smooth_cdf)
-  sims <- simulate_sft(model = "lba", n = n, p_vec = p_vec, design = c("AB", "AN", "NB", "NN"), logical_rules = "AND")
-  d <- sims$by_rule$AND; cells <- c("AB", "AN", "NB", "NN")
-  rts <- lapply(cells, function(s) d$RT[d$S == s & d$Correct == 1])
-  times <- get_time_range(rts)
-  ct <- build_ct_df(times, list(
-    list(label = "C_AND(t)", fn = sims$metrics$AND_Ct$Ct, rt = d$RT),
-    list(label = "C_Absence(t)", fn = sims$metrics$AND_Absence_Ct$Ct, rt = d$RT),
-    list(label = "C_Altieri(t)", fn = sims$metrics$Altieri_Ct$Ct_a1, rt = d$RT),
-    list(label = "C_Bound(t)", fn = sims$metrics$Altieri_Ct$Ct_a2, rt = d$RT)))
-  cdf <- build_cdf_df(times, list(list(label = "AB", rt = d$RT[d$S == "AB"], cr = d$Correct[d$S == "AB"]),
-                                  list(label = "NN", rt = d$RT[d$S == "NN"], cr = d$Correct[d$S == "NN"])),
-                      smooth_cdf = smooth_cdf, smooth_spar = smooth_spar)
-  p1 <- ggplot2::ggplot(ct, ggplot2::aes_string(x = "Time", y = "Ct", color = "Series", linetype = "Series")) + ggplot2::geom_line() +
-    ggplot2::geom_hline(yintercept = 1, linetype = "dashed") + ggplot2::theme_classic()
-  p2 <- ggplot2::ggplot(cdf, ggplot2::aes_string(x = "Time", y = "CDF", color = "Series")) + ggplot2::geom_line() + ggplot2::theme_classic()
-  list(sims = sims, plot_df = ct, cdf_df = cdf, plot = p1, cdf_plot = p2, p_vec = p_vec)
-}
-

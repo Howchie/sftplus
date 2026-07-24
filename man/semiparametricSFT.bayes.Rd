@@ -28,7 +28,9 @@ semiparametricSFT.bayes(inData = NULL, Condition = NULL, n_bins = 25L,
 \arguments{
   \item{inData}{A data frame with \code{Subject}, \code{Condition}, \code{RT},
     \code{Correct}, \code{Channel1}, and \code{Channel2}. \code{data} and
-    \code{sftData} are accepted aliases for backward compatibility.}
+    \code{sftData} are accepted aliases for backward compatibility. Within
+    the data frame, \code{rt}, \code{subjects}, and \code{LogicalRule} are
+    accepted as aliases for \code{RT}, \code{Subject}, and \code{Condition}.}
   \item{Condition}{Optional condition value or values to retain.}
   \item{n_bins}{Requested number of pooled response-time intervals.}
   \item{rt_units}{Input RT units. Hazards and priors are calibrated in seconds.}

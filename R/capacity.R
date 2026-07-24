@@ -158,6 +158,7 @@ capacity.altieri <- function(RT, CR = NULL, ratio = TRUE, Condition = NULL, Subj
 
 capacityGroup <- function(inData, acc.cutoff = .9, ratio = TRUE, OR = NULL,
                           stopping.rule = c("OR", "AND", "STST"), plotCt = TRUE, ...) {
+  inData <- .sft_normalize_columns(inData)
   required <- c("Subject", "Condition", "RT", "Correct")
   if (!is.data.frame(inData) || !all(required %in% names(inData))) {
     stop("inData must contain Subject, Condition, RT, and Correct columns.")
@@ -240,4 +241,3 @@ capacityGroup <- function(inData, acc.cutoff = .9, ratio = TRUE, OR = NULL,
   list(overview = overview, Ct.fn = curve_mat, capacity = fits,
        times = times, z = z_by_condition, rule = rule)
 }
-

@@ -328,6 +328,47 @@
 }
 
 
+# ---- Scale-aware default priors for the UCIP capacity models ---------------
+#
+# The priors are anchored on the standardized reference-information phi scale,
+# whose unit is interpretable (a Cz shift for a median-information participant),
+# and the multiplicative scale carries the locally corresponding widths.
+#
+# standardized anchor (phi = sqrt(V_ref) * theta):
+#   mu_phi  ~ N(0, 0.5^2)          about a 95% prior range of +/- 1 reference-Cz
+#   tau_phi ~ HalfNormal(0, 1)     broad between-subject heterogeneity
+#   tau_phi^2 ~ InvGamma(2, 0.5)   conjugate counterpart for the Gibbs sampler
+#
+#   multiplicative (eta = log(A/B)): prior_sd = prior_tau_sd = 0.35 keeps the
+#                   central one-SD prior capacity ratio near [0.70, 1.42]; the
+#                   InvGamma second moment matches with prior_rate = 0.35^2.
+.sft_default_priors <- function(score_method, V_ref) {
+  if (score_method == "multiplicative") {
+    list(prior_sd = 0.35, prior_tau_sd = 0.35,
+         prior_shape = 2, prior_rate = 0.35^2)
+  } else {
+    list(prior_sd = 0.5, prior_tau_sd = 1,
+         prior_shape = 2, prior_rate = 0.5)
+  }
+}
+
+
+# Fill any prior hyperparameter the caller left at NULL with the scale-aware
+# default, leaving user-supplied values untouched. V_ref comes from the scored
+# data and is retained in the signature for callers that may key defaults on it.
+.sft_resolve_priors <- function(score_method, V_ref, prior_sd = NULL,
+                                prior_tau_sd = NULL, prior_shape = NULL,
+                                prior_rate = NULL) {
+  defaults <- .sft_default_priors(score_method, V_ref)
+  list(
+    prior_sd = if (is.null(prior_sd)) defaults$prior_sd else prior_sd,
+    prior_tau_sd = if (is.null(prior_tau_sd)) defaults$prior_tau_sd else prior_tau_sd,
+    prior_shape = if (is.null(prior_shape)) defaults$prior_shape else prior_shape,
+    prior_rate = if (is.null(prior_rate)) defaults$prior_rate else prior_rate
+  )
+}
+
+
 .sft_validate_bayes_args <- function(ndraws, burnin, thin, chains,
                                      prior_shape, prior_rate, prior_mean,
                                      prior_sd, prior_tau_sd, hdi, rope,
@@ -344,14 +385,18 @@
   if (chains < 2L || chains != as.integer(chains)) {
     stop("chains must be an integer >= 2.")
   }
-  if (!is.finite(prior_shape) || prior_shape <= 0 ||
-      !is.finite(prior_rate) || prior_rate <= 0) {
+  # prior_shape / prior_rate / prior_sd / prior_tau_sd may be NULL, meaning
+  # "resolve to a scale-aware default once the data are scored"; only
+  # user-supplied (non-NULL) values are validated here.
+  if ((!is.null(prior_shape) && (!is.finite(prior_shape) || prior_shape <= 0)) ||
+      (!is.null(prior_rate) && (!is.finite(prior_rate) || prior_rate <= 0))) {
     stop("prior_shape and prior_rate must be positive finite values.")
   }
-  if (!is.finite(prior_mean) || !is.finite(prior_sd) || prior_sd <= 0) {
-    stop("prior_mean must be finite and prior_sd must be positive.")
+  if (!is.finite(prior_mean)) stop("prior_mean must be finite.")
+  if (!is.null(prior_sd) && (!is.finite(prior_sd) || prior_sd <= 0)) {
+    stop("prior_sd must be positive and finite.")
   }
-  if (!is.finite(prior_tau_sd) || prior_tau_sd <= 0) {
+  if (!is.null(prior_tau_sd) && (!is.finite(prior_tau_sd) || prior_tau_sd <= 0)) {
     stop("prior_tau_sd must be positive and finite.")
   }
   if (!is.finite(hdi) || hdi <= 0 || hdi >= 1) stop("hdi must lie in (0, 1).")
@@ -368,20 +413,18 @@
 }
 
 
-# The effect a single UCIP bootstrap replicate contributes: the score-effect
-# U/V for method = "score", the reference-information standardized score
-# effect for method = "standardized", or the log-capacity ratio for the
-# "multiplicative" (eta = log(A/B)) method. For the standardized score,
-# v_ref is supplied by the original fitted participants and is held fixed
-# across bootstrap replicates.
+# The effect a single UCIP bootstrap replicate contributes: the
+# reference-information standardized score effect phi for method =
+# "standardized", or the log-capacity ratio for the "multiplicative"
+# (eta = log(A/B)) method. For the standardized score, v_ref is supplied by the
+# original fitted participants and is held fixed across bootstrap replicates.
 .sft_ucip_boot_effect <- function(rt, CR, stopping.rule, method,
                                   v_ref = NULL) {
   s <- .sft_ucip_score(rt, CR, stopping.rule = stopping.rule)
   if (method == "multiplicative") {
     s$log_capacity
   } else {
-    theta <- s$numer / s$variance
-    if (method == "standardized") theta * sqrt(v_ref) else theta
+    (s$numer / s$variance) * sqrt(v_ref)
   }
 }
 
@@ -414,7 +457,7 @@
 
 
 .sft_ucip_score_data <- function(input, stopping.rule,
-                                 method = c("score", "multiplicative", "standardized"),
+                                 method = c("standardized", "multiplicative"),
                                  var_method = "analytic", n_boot = 2000L) {
   method <- .sft_score_method(method)
   var_method <- .sft_var_method(var_method)
@@ -460,19 +503,18 @@
   U <- vapply(scores, function(x) x$numer, numeric(1))
   V <- vapply(scores, function(x) x$variance, numeric(1))
 
-  # The standardized score is expressed in reference-information units. The
-  # reference is computed after degenerate-subject dropping so it is based on
-  # exactly the participants entering the fit. For one participant this makes
-  # phi_hat = Cz and its analytic precision equal to one by construction.
-  V_ref <- if (method == "standardized") stats::median(V) else NULL
-  phi_hat <- if (method == "standardized") theta_hat * sqrt(V_ref) else NULL
+  # The reference information V_ref (the median sampling variance) anchors both
+  # the standardized phi scale and the information-scaled default priors. It is
+  # computed after degenerate-subject dropping so it is based on exactly the
+  # participants entering the fit. For one participant this makes phi_hat = Cz
+  # and its analytic precision equal to one by construction. It is computed for
+  # both methods even though only "standardized" rescales the effect by it.
+  V_ref <- stats::median(V)
+  phi_hat <- theta_hat * sqrt(V_ref)
 
-  effect_hat <- if (method == "multiplicative") eta_hat else if (
-    method == "standardized") phi_hat else theta_hat
-  precision <- if (method == "multiplicative") eta_precision else theta_precision
-  if (method == "standardized") precision <- V / V_ref
-  effect_name <- if (method == "multiplicative") "eta" else if (
-    method == "standardized") "phi" else "theta"
+  effect_hat <- if (method == "multiplicative") eta_hat else phi_hat
+  precision <- if (method == "multiplicative") eta_precision else V / V_ref
+  effect_name <- if (method == "multiplicative") "eta" else "phi"
 
   # An optional within-subject bootstrap variance for the active effect scale.
   # It replaces the closed-form precision used by the hierarchy; the analytic
@@ -491,18 +533,7 @@
     used_se <- 1 / sqrt(precision)
   }
 
-  score_df <- if (method == "score") {
-    data.frame(
-      subject = input$subject,
-      U = U,
-      V = V,
-      theta_hat = theta_hat,
-      se = used_se,
-      se_analytic = analytic_se,
-      Cz = vapply(scores, function(x) unname(x$statistic), numeric(1)),
-      stringsAsFactors = FALSE
-    )
-  } else if (method == "standardized") {
+  score_df <- if (method == "standardized") {
     data.frame(
       subject = input$subject,
       U = U,
@@ -673,7 +704,7 @@
 .sft_prior_predictive <- function(effect_hat, precision, ndraws, method,
                                   prior_shape, prior_rate, prior_mean,
                                   prior_sd, prior_tau_sd,
-                                  effect_name = "theta") {
+                                  effect_name = "phi") {
   prior_mu <- stats::rnorm(ndraws, prior_mean, prior_sd)
   if (method == "InvGamma") {
     prior_tau2 <- 1 / stats::rgamma(ndraws, shape = prior_shape, rate = prior_rate)
@@ -754,8 +785,8 @@
 .sft_stan_model_cache <- new.env(parent = emptyenv())
 
 
-.sft_stan_code <- function(method, effect_name = "theta",
-                           precision_name = "V") {
+.sft_stan_code <- function(method, effect_name = "phi",
+                           precision_name = "W") {
   effect_hat_name <- paste0(effect_name, "_hat")
   if (method == "HalfNormal") {
     return(paste0("data {
@@ -826,12 +857,11 @@ model {
                                     burnin, thin, chains, prior_mean,
                                     prior_sd, prior_tau_sd, seed,
                                     adapt_delta, max_treedepth, stan_control,
-                                    effect_name = "theta") {
+                                    effect_name = "phi") {
   if (!requireNamespace("rstan", quietly = TRUE)) {
     stop("method='", method, "' requires the optional 'rstan' package.")
   }
-  precision_name <- if (effect_name == "eta") "P" else if (
-    effect_name == "phi") "W" else "V"
+  precision_name <- if (effect_name == "eta") "P" else "W"
   code <- .sft_stan_code(method, effect_name, precision_name)
   key <- paste0(method, "_", as.character(prior_tau_sd), "_", effect_name)
   model <- if (exists(key, envir = .sft_stan_model_cache, inherits = FALSE)) {

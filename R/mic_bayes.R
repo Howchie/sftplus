@@ -25,6 +25,7 @@
 # each channel, and trials with any other channel level are dropped.
 .sft_mic_cells_from_data <- function(data, Condition = NULL, Subject = NULL,
                                      correct = TRUE) {
+  data <- .sft_normalize_columns(data)
   required <- c("Subject", "RT", "Correct", "Channel1", "Channel2")
   missing <- setdiff(required, names(data))
   if (length(missing)) {
@@ -295,6 +296,8 @@
 #'
 #' @param inData A canonical SFT data frame (\code{Subject}, \code{RT},
 #'   \code{Correct}, \code{Channel1}, \code{Channel2}, optional \code{Condition}),
+#'   with `subjects`, `rt`, and `LogicalRule` accepted as aliases for the first,
+#'   second, and optional condition columns,
 #'   a nested list of per-subject \code{HH}/\code{HL}/\code{LH}/\code{LL} RT
 #'   lists, or a flat single-subject \code{HH}/\code{HL}/\code{LH}/\code{LL} list.
 #' @param Condition,Subject Optional single condition and subject selectors used

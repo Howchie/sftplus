@@ -15,7 +15,9 @@ sft_data_to_rt(data, Condition = NULL, Subject = NULL,
 \arguments{
   \item{data}{A data frame containing \code{Subject}, \code{RT},
     \code{Correct}, \code{Channel1}, and \code{Channel2}.  \code{Condition}
-    is optional when the data contain one condition.}
+    is optional when the data contain one condition. The aliases \code{subjects},
+    \code{rt}, and \code{LogicalRule} are accepted for \code{Subject},
+    \code{RT}, and \code{Condition}, respectively.}
   \item{Condition}{Optional single condition value to retain.}
   \item{Subject}{Optional subject value or values to retain.}
   \item{stopping.rule}{One of \code{"OR"}, \code{"AND"}, or \code{"STST"}.}

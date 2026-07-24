@@ -4,6 +4,7 @@ fPCAassessment<- function(sftData, dimensions,
                           detection=TRUE,
                           register=c("median","mean","none"), 
                           plotPCs=FALSE, ...) {
+  sftData <- .sft_normalize_columns(sftData)
   subjects <- sort(unique(sftData$Subject))
   subjects <- factor(subjects)
   n.subjects <- length(subjects)

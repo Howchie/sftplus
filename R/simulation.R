@@ -40,16 +40,66 @@ apply_logic_gates <- function(LogicalRule, A_t, nA_t, B_t, nB_t) {
              Channel1_RT = tA[keep], Channel2_RT = tB[keep], stringsAsFactors = FALSE)
 }
 
+# Assemble sequential trials from independently generated channel finish
+# times. Both channels are drawn with the existing RT-generating machinery;
+# this function controls only order and logical stopping.
+.serial_combine_races <- function(rts, LogicalRule,
+                                  serial_mode = c("self-terminating", "exhaustive"),
+                                  serial_order = c("random", "A", "B"),
+                                  p_A_first = .5) {
+  serial_mode <- match.arg(serial_mode); serial_order <- match.arg(serial_order)
+  if (!is.matrix(rts) || !all(c("A", "n_A", "B", "n_B") %in% colnames(rts))) {
+    stop("Serial simulation requires finish times for A, n_A, B, and n_B.", call. = FALSE)
+  }
+  if (!LogicalRule %in% c("OR", "AND", "XOR", "ID")) stop("Unknown LogicalRule.")
+  if (!is.numeric(p_A_first) || length(p_A_first) != 1L || is.na(p_A_first) || !is.finite(p_A_first) ||
+      p_A_first < 0 || p_A_first > 1) stop("p_A_first must be one finite value in [0, 1].", call. = FALSE)
+  n <- nrow(rts)
+  A_t <- as.numeric(rts[, "A"]); nA_t <- as.numeric(rts[, "n_A"])
+  B_t <- as.numeric(rts[, "B"]); nB_t <- as.numeric(rts[, "n_B"])
+  A_yes <- A_t < nA_t; B_yes <- B_t < nB_t
+  tieA <- is.finite(A_t) & A_t == nA_t; tieB <- is.finite(B_t) & B_t == nB_t
+  if (any(tieA)) A_yes[tieA] <- stats::runif(sum(tieA)) < .5
+  if (any(tieB)) B_yes[tieB] <- stats::runif(sum(tieB)) < .5
+  A_rt <- pmin(A_t, nA_t); B_rt <- pmin(B_t, nB_t)
+  A_first <- switch(serial_order, A = rep(TRUE, n), B = rep(FALSE, n), random = stats::runif(n) < p_A_first)
+  first_yes <- ifelse(A_first, A_yes, B_yes); second_yes <- ifelse(A_first, B_yes, A_yes)
+  first_rt <- ifelse(A_first, A_rt, B_rt); second_rt <- ifelse(A_first, B_rt, A_rt)
+  exhaustive_rt <- first_rt + second_rt
+  if (serial_mode == "self-terminating" && LogicalRule == "ID") {
+    stop("Serial self-terminating simulation currently supports OR and AND, not ID.", call. = FALSE)
+  }
+  if (LogicalRule == "OR") {
+    R <- ifelse(first_yes | second_yes, "yes", "no")
+    RT <- if (serial_mode == "self-terminating") ifelse(first_yes, first_rt, exhaustive_rt) else exhaustive_rt
+  } else if (LogicalRule == "AND") {
+    R <- ifelse(first_yes & second_yes, "yes", "no")
+    RT <- if (serial_mode == "self-terminating") ifelse(!first_yes, first_rt, exhaustive_rt) else exhaustive_rt
+  } else if (LogicalRule == "XOR") {
+    R <- ifelse(xor(A_yes, B_yes), "yes", "no"); RT <- exhaustive_rt
+  } else {
+    R <- ifelse(!A_yes & !B_yes, "NN", ifelse(A_yes & !B_yes, "AN", ifelse(!A_yes & B_yes, "NB", "AB")))
+    RT <- exhaustive_rt
+  }
+  keep <- is.finite(RT)
+  data.frame(R = R[keep], RT = RT[keep], A_yes = A_yes[keep], B_yes = B_yes[keep],
+             Channel1_RT = A_rt[keep], Channel2_RT = B_rt[keep],
+             SerialOrder = ifelse(A_first, "A", "B")[keep], stringsAsFactors = FALSE)
+}
+
 LogicalRules_rfun_lba <- function(n, pars, LogicalRule, shared_capacity = NULL,
-                                   kappa = NULL, tau = NULL) {
+                                   kappa = NULL, tau = NULL, rho = NULL, return_finish = FALSE) {
   if (!requireNamespace("rtdists", quietly = TRUE)) stop("LBA simulation requires rtdists.")
   racers <- c("A", "n_A", "B", "n_B")
   if (!all(racers %in% rownames(pars))) stop("pars must have rows A, n_A, B, n_B.")
   req <- c("A", "b", "t0", "v", "sv")
   if (!all(req %in% colnames(pars))) stop("pars must have columns A, b, t0, v, sv.")
+  if (is.null(tau) && !is.null(rho)) tau <- rho
   shared <- .lba_resolve_shared_capacity(shared_capacity, kappa, tau)
   rts <- .lba_draw_rts(n, pars, racers, shared)
+  if (is.null(dim(rts))) rts <- matrix(rts, nrow = n, ncol = length(racers))
   colnames(rts) <- racers
+  if (isTRUE(return_finish)) return(rts)
   apply_logic_gates(LogicalRule, rts[, "A"], rts[, "n_A"], rts[, "B"], rts[, "n_B"])
 }
 
@@ -76,7 +126,7 @@ LogicalRules_rfun_lba <- function(n, pars, LogicalRule, shared_capacity = NULL,
     if (is.null(value)) default else value
   }
   kappa <- get_one("kappa", 1)
-  tau <- get_one("tau", 0)
+  tau <- get_one("tau", get_one("rho", 0))
   active <- get_one("active", TRUE)
   if (length(kappa) != 1L || !is.finite(kappa) || kappa <= 0) {
     stop("shared-capacity kappa must be one finite value greater than zero.", call. = FALSE)
@@ -156,6 +206,18 @@ LogicalRules_rfun_lba <- function(n, pars, LogicalRule, shared_capacity = NULL,
     nms <- c(...); hit <- nms[nms %in% names(p_vec)]
     if (length(hit)) .param_get(p_vec, hit[[1]]) else vc
   }
+  kappa_value <- if (is.null(kappa)) {
+    hit <- c("capacity_kappa", "capacity_target_kappa", "shared_capacity_kappa",
+             "shared_kappa", "kappa")
+    .param_get(p_vec, hit[hit %in% names(p_vec)][1L], 1)
+  } else kappa
+  tau_value <- if (is.null(tau)) {
+    # `rho` is accepted as a backwards-compatible alias for `tau`.
+    hit <- c("capacity_tau", "capacity_target_tau", "shared_capacity_tau",
+             "shared_tau", "tau", "capacity_rho", "shared_capacity_rho",
+             "shared_rho", "rho")
+    .param_get(p_vec, hit[hit %in% names(p_vec)][1L], 0)
+  } else tau
   list(vc_yesA_H = get("vc_yesA_H", "vc_yesA", "vc_yesH"),
        vc_yesA_L = get("vc_yesA_L", "vc_yesL", "vc_yesA"),
        vc_yesB_H = get("vc_yesB_H", "vc_yesB", "vc_yesH"),
@@ -164,18 +226,7 @@ LogicalRules_rfun_lba <- function(n, pars, LogicalRule, shared_capacity = NULL,
        cap_target = .param_get(p_vec, "capacity_target", .param_get(p_vec, "capacity", 0)),
        cap_absence = .param_get(p_vec, "capacity_absence", 0),
        shared_capacity = .lba_resolve_shared_capacity(
-         list(
-           kappa = if (is.null(kappa)) .param_get(p_vec, "capacity_kappa",
-                                                   .param_get(p_vec, "capacity_target_kappa",
-                                                               .param_get(p_vec, "shared_capacity_kappa",
-                                                                          .param_get(p_vec, "shared_kappa",
-                                                                                     .param_get(p_vec, "kappa", 1))))) else kappa,
-           tau = if (is.null(tau)) .param_get(p_vec, "capacity_tau",
-                                               .param_get(p_vec, "capacity_target_tau",
-                                                           .param_get(p_vec, "shared_capacity_tau",
-                                                                      .param_get(p_vec, "shared_tau",
-                                                                                 .param_get(p_vec, "tau", 0))))) else tau,
-           active = TRUE)))
+         list(kappa = kappa_value, tau = tau_value, active = TRUE)))
 }
 
 .lba_cell_pars <- function(p_vec, meta_row, state) {
@@ -198,6 +249,11 @@ LogicalRules_rfun_lba <- function(n, pars, LogicalRule, shared_capacity = NULL,
 
 .lba_simulate_rule_cell <- function(n, pars, logical_rule, shared_capacity = NULL) {
   LogicalRules_rfun_lba(n, pars, logical_rule, shared_capacity = shared_capacity)
+}
+
+.lba_simulate_serial_cell <- function(n, pars, logical_rule, serial_mode, serial_order, p_A_first) {
+  rts <- LogicalRules_rfun_lba(n, pars, logical_rule, return_finish = TRUE)
+  .serial_combine_races(rts, logical_rule, serial_mode, serial_order, p_A_first)
 }
 
 .ou_init_state <- function(p_vec) {
@@ -229,7 +285,7 @@ LogicalRules_rfun_lba <- function(n, pars, LogicalRule, shared_capacity = NULL,
 }
 
 LogicalRules_OU_rfun_R <- function(n, pars, LogicalRule, cross_talk = c(pos = 0, neg = 0), dt = .001, max_time = 3,
-                                   bridge = TRUE, bridge_exp_cutoff = -20) {
+                                   bridge = TRUE, bridge_exp_cutoff = -20, return_finish = FALSE) {
   racers <- c("A", "n_A", "B", "n_B"); a <- pars[racers, "a"]; u <- pars[racers, "u"]; sv <- pars[racers, "sv"]; b <- pars[racers, "b"]; t0 <- pars[racers, "t0"]
   threshold <- b; threshold[c(2, 4)] <- -threshold[c(2, 4)]
   x <- matrix(0, n, 4); finish <- matrix(Inf, n, 4); done <- matrix(FALSE, n, 4); colnames(finish) <- racers
@@ -261,6 +317,7 @@ LogicalRules_OU_rfun_R <- function(n, pars, LogicalRule, cross_talk = c(pos = 0,
       }
     }
   }
+  if (isTRUE(return_finish)) return(finish)
   apply_logic_gates(LogicalRule, finish[, 1], finish[, 2], finish[, 3], finish[, 4])
 }
 
@@ -312,25 +369,30 @@ LogicalRules_OU_rfun_R <- function(n, pars, LogicalRule, cross_talk = c(pos = 0,
 LogicalRules_OU_rfun_Rcpp <- function(n, pars, LogicalRule, cross_talk = c(pos = 0, neg = 0), dt = .001, max_time = 3,
                                       bridge = TRUE, bridge_exp_cutoff = -20, adaptive = FALSE,
                                       adaptive_mode = c("distance", "ptol"), adapt_factor = 32, adapt_eps = 1.5,
-                                      p_tol = 1e-9, curv_tol = .1) {
+                                      p_tol = 1e-9, curv_tol = .1, return_finish = FALSE) {
   if (!.ensure_ou_rcpp()) stop("Rcpp backend not available; use backend='R'.")
   adaptive_mode <- match.arg(adaptive_mode); racers <- c("A", "n_A", "B", "n_B")
   finish <- .sft_ou_env$LogicalRules_OU_finish_rcpp(as.integer(n), as.numeric(pars[racers, "a"]), as.numeric(pars[racers, "u"]),
                                                     as.numeric(pars[racers, "sv"]), as.numeric(pars[racers, "b"]), as.numeric(pars[racers, "t0"]),
                                                     as.numeric(cross_talk[["pos"]]), as.numeric(cross_talk[["neg"]]), as.numeric(dt), as.numeric(max_time),
                                                     isTRUE(bridge), as.numeric(bridge_exp_cutoff), isTRUE(adaptive), as.numeric(adapt_factor), as.numeric(adapt_eps))
-  colnames(finish) <- racers; apply_logic_gates(LogicalRule, finish[, 1], finish[, 2], finish[, 3], finish[, 4])
+  colnames(finish) <- racers
+  if (isTRUE(return_finish)) return(finish)
+  apply_logic_gates(LogicalRule, finish[, 1], finish[, 2], finish[, 3], finish[, 4])
 }
 
 LogicalRules_OU_rfun <- function(n, pars, LogicalRule, cross_talk = c(pos = 0, neg = 0), dt = .001, max_time = 3,
                                  bridge = TRUE, bridge_exp_cutoff = -20, backend = c("auto", "Rcpp", "R"),
                                  adaptive = FALSE, adaptive_mode = c("distance", "ptol"), adapt_factor = 32,
-                                 adapt_eps = 1.5, p_tol = 1e-9, curv_tol = .1) {
+                                 adapt_eps = 1.5, p_tol = 1e-9, curv_tol = .1, return_finish = FALSE) {
   backend <- match.arg(backend); adaptive_mode <- match.arg(adaptive_mode)
   use <- if (backend == "Rcpp") TRUE else if (backend == "R") FALSE else .ensure_ou_rcpp()
   if (use) LogicalRules_OU_rfun_Rcpp(n, pars, LogicalRule, cross_talk, dt, max_time, bridge, bridge_exp_cutoff,
-                                      adaptive, adaptive_mode, adapt_factor, adapt_eps, p_tol, curv_tol)
-  else { if (adaptive) warning("adaptive=TRUE is only available in the Rcpp backend; using fixed dt."); LogicalRules_OU_rfun_R(n, pars, LogicalRule, cross_talk, dt, max_time, bridge, bridge_exp_cutoff) }
+                                      adaptive, adaptive_mode, adapt_factor, adapt_eps, p_tol, curv_tol,
+                                      return_finish = return_finish)
+  else { if (adaptive) warning("adaptive=TRUE is only available in the Rcpp backend; using fixed dt.");
+    LogicalRules_OU_rfun_R(n, pars, LogicalRule, cross_talk, dt, max_time, bridge, bridge_exp_cutoff,
+                           return_finish = return_finish) }
 }
 
 .ou_simulate_rule_cell <- function(n, pars, logical_rule, p_vec, dt = .001, max_time = 2,
@@ -342,6 +404,19 @@ LogicalRules_OU_rfun <- function(n, pars, LogicalRule, cross_talk = c(pos = 0, n
                        dt = dt, max_time = max_time, bridge = bridge, bridge_exp_cutoff = bridge_exp_cutoff,
                        backend = backend, adaptive = adaptive, adaptive_mode = adaptive_mode,
                        adapt_factor = adapt_factor, adapt_eps = adapt_eps, p_tol = p_tol, curv_tol = curv_tol)
+}
+
+.ou_simulate_serial_cell <- function(n, pars, logical_rule, serial_mode, serial_order, p_A_first,
+                                     dt = .001, max_time = 2, bridge = TRUE, bridge_exp_cutoff = -20,
+                                     backend = "auto", adaptive = FALSE, adaptive_mode = "distance",
+                                     adapt_factor = 32, adapt_eps = 1.5, p_tol = 1e-9, curv_tol = .1) {
+  finish <- LogicalRules_OU_rfun(n, pars, logical_rule, cross_talk = c(pos = 0, neg = 0),
+                                  dt = dt, max_time = max_time, bridge = bridge,
+                                  bridge_exp_cutoff = bridge_exp_cutoff, backend = backend,
+                                  adaptive = adaptive, adaptive_mode = adaptive_mode,
+                                  adapt_factor = adapt_factor, adapt_eps = adapt_eps,
+                                  p_tol = p_tol, curv_tol = curv_tol, return_finish = TRUE)
+  .serial_combine_races(finish, logical_rule, serial_mode, serial_order, p_A_first)
 }
 
 .compute_capacity <- function(data, logical_rules) {
@@ -390,26 +465,93 @@ LogicalRules_OU_rfun <- function(n, pars, LogicalRule, cross_talk = c(pos = 0, n
   out
 }
 
+.resolve_serial_options <- function(architecture, serial_mode, serial_order, p_A_first,
+                                    serial_first = NULL, serial_stopping = NULL,
+                                    serial_p_A_first = NULL, serial_type = NULL) {
+  architecture <- match.arg(architecture, c("parallel", "serial"))
+  if (!is.null(serial_stopping)) serial_mode <- serial_stopping
+  if (!is.null(serial_type)) serial_mode <- serial_type
+  serial_mode <- sub("_", "-", as.character(serial_mode)[1L])
+  serial_mode <- match.arg(serial_mode, c("self-terminating", "exhaustive"))
+  serial_order <- match.arg(serial_order, c("random", "A", "B", "fixed"))
+  if (!is.null(serial_p_A_first)) p_A_first <- serial_p_A_first
+  if (!is.null(serial_first)) {
+    serial_first <- match.arg(as.character(serial_first)[1L], c("A", "B"))
+    if (serial_order %in% c("random", "fixed")) serial_order <- serial_first
+    else if (!identical(serial_order, serial_first)) stop("serial_first conflicts with serial_order.", call. = FALSE)
+  }
+  if (serial_order == "fixed") serial_order <- "A"
+  if (!is.numeric(p_A_first) || length(p_A_first) != 1L || is.na(p_A_first) || !is.finite(p_A_first) || p_A_first < 0 || p_A_first > 1) {
+    stop("p_A_first must be one finite value in [0, 1].", call. = FALSE)
+  }
+  list(architecture = architecture, serial_mode = serial_mode,
+       serial_order = serial_order, p_A_first = as.numeric(p_A_first))
+}
+
 simulate_sft <- function(model = c("lba", "ou"), n, p_vec, design = NULL, salience = FALSE,
                           logical_rules = NULL, sics = FALSE, cdfs = FALSE, a_t = FALSE,
                           subject = 1, backend = c("auto", "Rcpp", "R"), dt = .001, max_time = 2,
                           bridge = TRUE, bridge_exp_cutoff = -20, adaptive = TRUE,
                           adaptive_mode = c("ptol", "distance"), adapt_factor = 32, adapt_eps = 1.5,
-                          p_tol = 1e-8, curv_tol = .05, kappa = NULL, tau = NULL) {
+                          p_tol = 1e-8, curv_tol = .05, kappa = NULL, tau = NULL, rho = NULL,
+                          architecture = c("parallel", "serial"),
+                          serial_mode = c("self-terminating", "exhaustive"),
+                          serial_order = c("random", "A", "B", "fixed"), p_A_first = .5,
+                          serial_first = NULL, serial_stopping = NULL, serial_p_A_first = NULL,
+                          serial_type = NULL) {
   model <- match.arg(model); backend <- match.arg(backend); adaptive_mode <- match.arg(adaptive_mode)
   if (length(n) != 1L || n < 1 || n != as.integer(n)) stop("n must be a positive integer.")
+  serial <- .resolve_serial_options(architecture, serial_mode, serial_order, p_A_first,
+                                     serial_first, serial_stopping, serial_p_A_first, serial_type)
+  architecture <- serial$architecture; serial_mode <- serial$serial_mode
+  serial_order <- serial$serial_order; p_A_first <- serial$p_A_first
+  if (is.null(tau) && !is.null(rho)) tau <- rho
+  if (is.null(logical_rules)) {
+    # ID is not defined for serial self-termination. Keep the default focused
+    # on the requested OR case; AND remains available when explicitly asked
+    # for and uses the analogous first-absence rule.
+    logical_rules <- if (architecture == "serial" && serial_mode == "self-terminating") c("OR") else c("OR", "AND", "ID")
+  }
   logical_rules <- .normalize_logical_rules(logical_rules); design_df <- .expand_design(design, salience)
-  state <- if (model == "lba") .lba_init_state(p_vec, kappa = kappa, tau = tau) else .ou_init_state(p_vec)
+  if (architecture == "serial" && serial_mode == "self-terminating" && "ID" %in% logical_rules) {
+    stop("Serial self-terminating simulation currently supports OR and AND, not ID.", call. = FALSE)
+  }
+  sim_p_vec <- p_vec; init_p_vec <- p_vec
+  if (architecture == "serial" && model == "lba") {
+    # Ignore shared-capacity values before validation as well as after it.
+    if ("kappa" %in% names(init_p_vec)) init_p_vec[["kappa"]] <- 1
+    for (nm in c("tau", "rho")) if (nm %in% names(init_p_vec)) init_p_vec[[nm]] <- 0
+    state <- .lba_init_state(init_p_vec, kappa = 1, tau = 0)
+  } else state <- if (model == "lba") .lba_init_state(p_vec, kappa = kappa, tau = tau) else .ou_init_state(p_vec)
+  if (architecture == "serial") {
+    state$cap_target <- 0; state$cap_absence <- 0
+    if (model == "lba") state$shared_capacity <- .lba_resolve_shared_capacity(list(kappa = 1, tau = 0, active = FALSE))
+    else {
+      for (nm in c("cross_talk_pos", "cross_talk_neg")) if (nm %in% names(sim_p_vec)) sim_p_vec[[nm]] <- 0
+      state$p_vec <- sim_p_vec
+    }
+  }
   chunks <- lapply(logical_rules, function(rule) lapply(seq_len(nrow(design_df)), function(i) {
     meta <- design_df[i, , drop = FALSE]
     pars <- if (model == "lba") .lba_cell_pars(p_vec, meta, state) else .ou_cell_pars(p_vec, meta, state)
-    shared <- if (model == "lba" && meta$Channel1 > 0 && meta$Channel2 > 0) {
-      state$shared_capacity
-    } else NULL
-    sim <- if (model == "lba") .lba_simulate_rule_cell(n, pars, rule, shared) else .ou_simulate_rule_cell(n, pars, rule, p_vec, dt, max_time, bridge, bridge_exp_cutoff, backend, adaptive, adaptive_mode, adapt_factor, adapt_eps, p_tol, curv_tol)
+    shared <- if (architecture == "parallel" && model == "lba" && meta$Channel1 > 0 && meta$Channel2 > 0) state$shared_capacity else NULL
+    sim <- if (architecture == "serial") {
+      if (model == "lba") .lba_simulate_serial_cell(n, pars, rule, serial_mode, serial_order, p_A_first)
+      else .ou_simulate_serial_cell(n, pars, rule, serial_mode, serial_order, p_A_first, dt, max_time,
+                                    bridge, bridge_exp_cutoff, backend, adaptive, adaptive_mode,
+                                    adapt_factor, adapt_eps, p_tol, curv_tol)
+    } else if (model == "lba") .lba_simulate_rule_cell(n, pars, rule, shared)
+    else .ou_simulate_rule_cell(n, pars, rule, p_vec, dt, max_time, bridge, bridge_exp_cutoff,
+                                backend, adaptive, adaptive_mode, adapt_factor, adapt_eps, p_tol, curv_tol)
     .annotate_trials(sim, rule, meta)
   }))
-  data <- .sft_bind_rows(unlist(chunks, recursive = FALSE)); data$Correct <- as.numeric(correctfun(data)); data$Subject <- subject; data$Model <- model; data$Backend <- if (model == "ou") backend else "R"
+  data <- .sft_bind_rows(unlist(chunks, recursive = FALSE)); data$Correct <- as.numeric(correctfun(data)); data$Subject <- rep(subject, length.out = nrow(data)); data$Model <- model; data$Backend <- if (model == "ou") backend else "R"
+  if (architecture == "serial") {
+    data$Architecture <- rep(architecture, length.out = nrow(data))
+    data$SerialMode <- rep(serial_mode, length.out = nrow(data))
+    if (!"SerialOrder" %in% names(data)) data$SerialOrder <- character(nrow(data))
+    data$p_A_first <- rep(p_A_first, length.out = nrow(data))
+  }
   by_rule <- .split_by_rule(data, logical_rules); out <- list(data = data, by_rule = by_rule, metrics = .compute_capacity(data, logical_rules))
   if (sics) out$sics <- .compute_sics(data, logical_rules); if (cdfs) out$cdfs <- .compute_cdfs(data, logical_rules); if (a_t) out$a_t <- .compute_at(data, logical_rules)
   out
@@ -478,4 +620,3 @@ obj_max_vs_min <- function(vy, vno, t, A, b, t0, sv) {
 find_equal_vc_yes <- function(vno, t, A, b, t0, sv, interval = c(1, 4.5)) {
   stats::optimize(obj_max_vs_min, interval = interval, vno = vno, t = t, A = A, b = b, t0 = t0, sv = sv)$minimum
 }
-

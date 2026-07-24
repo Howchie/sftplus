@@ -111,6 +111,7 @@ conflict.contrast.test <- function(RTay.H, RTay.L, RTxb.H, RTxb.L, CRay.H, CRay.
 }
 
 fPCAresilience<- function(sftData, dimensions, ratio=TRUE, register=c("median","mean","none"), plotPCs=FALSE, acc.cutoff=.70, ...) {
+  sftData <- .sft_normalize_columns(sftData)
   subjects <- sort(unique(sftData$Subject))
   subjects <- factor(subjects)
   nsubjects <- length(subjects)
@@ -466,6 +467,7 @@ shift <- function(x, n, wrap=FALSE) {
 
 
 fPCArdiff<- function(sftData, dimensions, ratio=TRUE, register=c("median","mean","none"), plotPCs=FALSE, acc.cutoff=.70, ...) {
+  sftData <- .sft_normalize_columns(sftData)
   subjects <- sort(unique(sftData$Subject))
   subjects <- factor(subjects)
   nsubjects <- length(subjects)
