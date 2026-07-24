@@ -1,0 +1,10 @@
+suppressMessages(devtools::load_all(".", quiet=TRUE))
+set.seed(9)
+HH<-rexp(50,1/0.5); HL<-rexp(50,1/0.45); LH<-rexp(50,1/0.46); LL<-rexp(50,1/0.4)
+mt <- mic.test(HH,HL,LH,LL)
+sc <- sftplus:::.sft_mic_relative_score(list(HH=HH,HL=HL,LH=LH,LL=LL))
+cat("mic.test MIC:", unname(mt$statistic), " score MIC:", sc$mic, " match:", isTRUE(all.equal(unname(mt$statistic), sc$mic)), "\n")
+cat("relative_MIC == MIC/mean_RT:", isTRUE(all.equal(sc$rho, sc$mic/sc$mean_rt)), "\n")
+# scale invariance: multiply all RT by lambda -> rho unchanged
+sc2 <- sftplus:::.sft_mic_relative_score(list(HH=2*HH,HL=2*HL,LH=2*LH,LL=2*LL))
+cat("scale-invariant rho:", isTRUE(all.equal(sc$rho, sc2$rho)), " (raw MIC doubles:", isTRUE(all.equal(2*sc$mic, sc2$mic)),")\n")

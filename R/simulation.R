@@ -414,3 +414,68 @@ simulate_sft <- function(model = c("lba", "ou"), n, p_vec, design = NULL, salien
   if (sics) out$sics <- .compute_sics(data, logical_rules); if (cdfs) out$cdfs <- .compute_cdfs(data, logical_rules); if (a_t) out$a_t <- .compute_at(data, logical_rules)
   out
 }
+
+# ---- Factorial design expansion, logical-rule labelling, and LBA search helpers ----
+
+.normalize_logical_rules <- function(logical_rules) {
+  if (is.null(logical_rules)) logical_rules <- c("OR", "AND", "ID")
+  logical_rules <- unique(as.character(logical_rules))
+  bad <- setdiff(logical_rules, c("OR", "AND", "XOR", "ID"))
+  if (length(bad)) stop("Unsupported logical rules: ", paste(bad, collapse = ", "))
+  logical_rules
+}
+
+
+.default_design <- function(salience = FALSE) {
+  if (salience) c("HH", "HL", "LH", "LL", "HN", "LN", "NH", "NL", "NN") else c("AB", "AN", "NB", "NN")
+}
+
+
+.char_to_level <- function(ch) {
+  if (ch %in% c("A", "B", "H")) return(2L)
+  if (ch == "L") return(1L)
+  if (ch %in% c("N", "_")) return(0L)
+  stop("Unknown design character '", ch, "'.")
+}
+
+
+.expand_design <- function(design = NULL, salience = FALSE) {
+  if (is.null(design)) design <- .default_design(salience)
+  .sft_bind_rows(lapply(as.character(design), function(cell) {
+    if (nchar(cell) != 2L) stop("Design cells must contain two characters.")
+    l1 <- .char_to_level(substr(cell, 1, 1)); l2 <- .char_to_level(substr(cell, 2, 2))
+    s <- if (l1 > 0 && l2 > 0) "AB" else if (l1 > 0) "AN" else if (l2 > 0) "NB" else "NN"
+    data.frame(cell_raw = cell, S = s, Channel1 = l1, Channel2 = l2,
+               A_present = l1 > 0, B_present = l2 > 0, stringsAsFactors = FALSE)
+  }))
+}
+
+
+.annotate_trials <- function(tmp, logical_rule, meta_row) {
+  n <- nrow(tmp)
+  tmp$Condition <- rep(logical_rule, n); tmp$S <- rep(meta_row$S, n)
+  tmp$Channel1 <- rep(meta_row$Channel1, n); tmp$Channel2 <- rep(meta_row$Channel2, n)
+  tmp$Channel1_acc <- as.numeric((tmp$Channel1 > 0) == tmp$A_yes)
+  tmp$Channel2_acc <- as.numeric((tmp$Channel2 > 0) == tmp$B_yes)
+  tmp
+}
+
+
+.split_by_rule <- function(data, logical_rules) {
+  parts <- split(data, data$Condition)
+  setNames(lapply(logical_rules, function(r) if (is.null(parts[[r]])) data[0, , drop = FALSE] else parts[[r]]), logical_rules)
+}
+
+
+obj_max_vs_min <- function(vy, vno, t, A, b, t0, sv) {
+  if (!requireNamespace("rtdists", quietly = TRUE)) stop("This helper requires rtdists.")
+  fy <- rtdists::plba_norm(t, A = A, b = b, t0 = t0, mean_v = vy, sd_v = sv, posdrift = TRUE)
+  fn <- rtdists::plba_norm(t, A = A, b = b, t0 = t0, mean_v = vno, sd_v = sv, posdrift = TRUE)
+  mean((fy^2 - (1 - (1 - fn)^2))^2)
+}
+
+
+find_equal_vc_yes <- function(vno, t, A, b, t0, sv, interval = c(1, 4.5)) {
+  stats::optimize(obj_max_vs_min, interval = interval, vno = vno, t = t, A = A, b = b, t0 = t0, sv = sv)$minimum
+}
+

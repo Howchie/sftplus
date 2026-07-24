@@ -3,15 +3,16 @@ export(estimate.bounds, assessment, assessmentGroup, fPCAassessment, fPCAcapacit
        mic.test, sic.test, capacity.and, capacity.id, capacity.or, capacity.altieri,
        capacity.stst, capacityGroup, estimateNAH, estimateNAK, estimateUCIPor,
        estimateUCIPand, sic, sicGroup, sicGroupBF, sicDPtest, sictestBayes, ucip.test,
-       ucip.id.test, siDominance, ucip.bayes.test, ucip.bayes.single_subject.test,
+       ucip.id.test, siDominance, capacityGroup.bayes, ucip.bayes, micGroup.bayes,
        resilience, resilience.test,
-       simulate_sft, LogicalRules_rfun_lba, LogicalRules_OU_rfun,
+       simulate_sft, simulate_sft_group, LogicalRules_rfun_lba, LogicalRules_OU_rfun,
        LogicalRules_OU_rfun_R, LogicalRules_OU_rfun_Rcpp, correctfun,
        assessment_ta_or, assessment_ta_and, assessment_donkin_discrimination,
        build_ct_df, build_sic_df,
        build_at_df, build_cdf_df, get_time_range, smooth_one_cdf,
-       plot_altieri, find_equal_vc_yes, capacity.bayes, sft_data_to_rt)
-S3method(print, sft_bayes_capacity)
+       plot_altieri, find_equal_vc_yes, semiparametricSFT.bayes, mic.bayes, sic.bayes,
+       sft_data_to_rt)
+S3method(print, sft_bayes)
 
 # Import all packages listed as Imports or Depends
 import(methods,fda,SuppDists)

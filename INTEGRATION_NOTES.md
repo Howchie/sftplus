@@ -18,8 +18,9 @@ Bayesian routes:
   controls and repaired model-classification logic;
 - `siDominance(method = "dp")` provides directional posterior probabilities
   and posterior/prior event-probability ratios for each dominance relation;
-- `ucip.bayes.test()` is a hierarchical Bayesian companion to the UCIP/Cz z
-  test. It extracts the score numerator and information for each participant
+- `capacityGroup.bayes()` is a hierarchical Bayesian companion to the UCIP/Cz z
+  test (the Bayesian analogue of `capacityGroup()`; the single-subject kernel is
+  `ucip.bayes()`). It extracts the score numerator and information for each participant
   and partially pools the resulting score effects with a conjugate
   Normal/inverse-Gamma hierarchy. It does not pool raw RTs, and it is not a
   Bayes factor for the UCIP null.

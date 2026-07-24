@@ -1,0 +1,25 @@
+# Export all public sftplus APIs.
+export(estimate.bounds, assessment, assessmentGroup, fPCAassessment, fPCAcapacity,
+       mic.test, sic.test, capacity.and, capacity.id, capacity.or, capacity.altieri,
+       capacity.stst, capacityGroup, estimateNAH, estimateNAK, estimateUCIPor,
+       estimateUCIPand, sic, sicGroup, sicGroupBF, sicDPtest, sictestBayes, ucip.test,
+       ucip.id.test, siDominance, capacityGroup.bayes, ucip.bayes,
+       resilience, resilience.test,
+       simulate_sft, simulate_sft_group, LogicalRules_rfun_lba, LogicalRules_OU_rfun,
+       LogicalRules_OU_rfun_R, LogicalRules_OU_rfun_Rcpp, correctfun,
+       assessment_ta_or, assessment_ta_and, assessment_donkin_discrimination,
+       build_ct_df, build_sic_df,
+       build_at_df, build_cdf_df, get_time_range, smooth_one_cdf,
+       plot_altieri, find_equal_vc_yes, semiparametricSFT.bayes, mic.bayes, sic.bayes,
+       sft_data_to_rt)
+S3method(print, sft_bayes)
+
+# Import all packages listed as Imports or Depends
+import(methods,fda,SuppDists)
+importFrom("grDevices", "dev.new", "grey")
+importFrom("graphics", "abline", "axis", "legend", "lines", "mtext",
+           "par", "plot", "text", "hist")
+importFrom("stats", "anova", "approxfun", "ecdf", "ks.test", "lm",
+           "median", "optimize", "pnorm", "quantile", "runif", "stepfun",
+           "t.test", "smooth.spline", "predict", "setNames")
+importFrom("utils", "tail")

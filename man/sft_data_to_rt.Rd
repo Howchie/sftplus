@@ -41,7 +41,7 @@ nonnegative channel.
 \dontrun{
   lists <- sft_data_to_rt(sftData, Condition = "OR", Subject = "P1")
   ucip.test(lists$RT, lists$CR, stopping.rule = "OR")
-  ucip.bayes.test(sftData, Condition = "OR")
+  capacityGroup.bayes(sftData, Condition = "OR")
 }
 }
 \keyword{sft}

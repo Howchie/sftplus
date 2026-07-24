@@ -1,17 +1,20 @@
-\name{capacity.bayes}
-\alias{capacity.bayes}
-\title{OR-centred hierarchical Bayesian capacity model}
+\name{semiparametricSFT.bayes}
+\alias{semiparametricSFT.bayes}
+\title{OR-centred semiparametric hierarchical Bayesian SFT model}
 \description{
-  Fits a hierarchical piecewise-exponential Bayesian capacity model centred on
-  the OR stopping-rule UCIP identity. By default positive salience levels are
-  pooled by channel presence into \code{AB}, \code{A}, and \code{B}; an
-  explicit \code{salience_split} retains the four matched dual-target cells
-  and the corresponding single-target levels. Correct finite response times
+  Fits a hierarchical piecewise-exponential Bayesian model of the underlying
+  survival and hazard functions, centred on the OR stopping-rule UCIP identity,
+  and derives workload capacity from the posterior. By default positive salience
+  levels are pooled by channel presence into \code{AB}, \code{A}, and \code{B};
+  an explicit \code{salience_split} retains the four matched dual-target cells
+  and the corresponding single-target levels, and additionally identifies the
+  hierarchical survivor interaction contrast (\code{\link{sic.bayes}}) and mean
+  interaction contrast (\code{\link{mic.bayes}}). Correct finite response times
   are events and incorrect finite response times contribute censored exposure
   without an event.
 }
 \usage{
-capacity.bayes(data = NULL, Condition = NULL, n_bins = 25L,
+semiparametricSFT.bayes(inData = NULL, Condition = NULL, n_bins = 25L,
   rt_units = c("seconds", "milliseconds"),
   report_quantiles = c(0.05, 0.95), priors = NULL, smoothness = NULL,
   require_complete = TRUE, cell_mapping = NULL, salience_split = NULL,
@@ -20,11 +23,12 @@ capacity.bayes(data = NULL, Condition = NULL, n_bins = 25L,
   refresh = 0L, control = list(adapt_delta = 0.95, max_treedepth = 12L),
   hdi = 0.94, rope = 0, prior_predictive_draws = 200L,
   posterior_predictive_draws = 200L, return_fit = TRUE, sftData = NULL,
-  ...)
+  data = NULL, ...)
 }
 \arguments{
-  \item{data}{A data frame with \code{Subject}, \code{Condition}, \code{RT},
-    \code{Correct}, \code{Channel1}, and \code{Channel2}.}
+  \item{inData}{A data frame with \code{Subject}, \code{Condition}, \code{RT},
+    \code{Correct}, \code{Channel1}, and \code{Channel2}. \code{data} and
+    \code{sftData} are accepted aliases for backward compatibility.}
   \item{Condition}{Optional condition value or values to retain.}
   \item{n_bins}{Requested number of pooled response-time intervals.}
   \item{rt_units}{Input RT units. Hazards and priors are calibrated in seconds.}
@@ -52,19 +56,23 @@ capacity.bayes(data = NULL, Condition = NULL, n_bins = 25L,
   \item{prior_predictive_draws,posterior_predictive_draws}{Predictive-check
     draw controls.}
   \item{return_fit}{Store the \pkg{rstan} fit in the returned object.}
-  \item{sftData}{Alias for \code{data}.}
+  \item{sftData}{Alias for \code{inData}.}
   \item{...}{Compatibility aliases including \code{bins}, \code{nbin},
     \code{grid_bins}, \code{rt.units}, \code{central_quantiles},
     \code{prior}, \code{smooth}, \code{fit}, and \code{salience}.}
 }
 \value{
-  An object of class \code{sft_bayes_capacity}.  It contains the prepared
+  An object of class \code{sft_bayes}.  It contains the prepared
   trials, pooled grid and exposure/event arrays, posterior draws and optional
   Stan fit, cumulative hazards, draw-by-draw difference and ratio capacity,
   subject/population/new-subject summaries, predictive checks, diagnostics,
   prior metadata, and exact salience pooling rules.  Tidy curve rows are in
   \code{tidy_curves} and \code{curve_data}; the columns \code{Time}, \code{Ct},
   and \code{Series} make the result compatible with existing plotting helpers.
+  In salience-split mode the result also contains \code{sic} and \code{mic}, the
+  hierarchical survivor and mean interaction contrasts described under
+  \code{\link{sic.bayes}} and \code{\link{mic.bayes}}; both are \code{NULL} in
+  pooled mode, where the four cells are not identified.
 }
 \details{
   The fitted hierarchy is
@@ -89,7 +97,14 @@ capacity.bayes(data = NULL, Condition = NULL, n_bins = 25L,
 }
 \examples{
 \dontrun{
-  fit <- capacity.bayes(sftData, Condition = "OR", n_bins = 20, seed = 801)
+  fit <- semiparametricSFT.bayes(sftData, Condition = "OR", n_bins = 20, seed = 801)
   head(fit$tidy_curves)
+
+  # Full double-factorial fit with hierarchical SIC and MIC.
+  dfp <- semiparametricSFT.bayes(sftData, Condition = "OR", salience_split = TRUE, seed = 801)
+  mic.bayes(dfp)$summary   # group and subject MIC with sign tests
+  sic.bayes(dfp)$summary   # SIC(t) at every level
 }
 }
+\seealso{\code{\link{sic.bayes}}, \code{\link{mic.bayes}},
+  \code{\link{capacityGroup.bayes}}, \code{\link{sic}}}

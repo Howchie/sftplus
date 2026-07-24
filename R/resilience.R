@@ -814,3 +814,44 @@ fPCArdiff<- function(sftData, dimensions, ratio=TRUE, register=c("median","mean"
   
   return(list(Scores=scoreoutV, MeanCT=approxfun(tgood,resGoodmn), PF=pflist, shiftRT=registervals))
 }
+
+# ---- Capacity-style resilience coefficient and its UCIP-based test ----
+
+resilience.test <- function(RT, CR = NULL, Condition = NULL, Subject = NULL) {
+  converted <- .sft_as_rt_cr(RT, CR, stopping.rule = "OR",
+                             Condition = Condition, Subject = Subject)
+  RT <- converted$RT; CR <- converted$CR
+  if (length(RT) < 3L) stop("RT must contain AB, A, and B conditions.")
+  CR <- .sft_cr_list(RT[1:3], CR)
+  times <- .sft_finite_times(RT[1:3])
+  h <- lapply(1:3, function(i) estimateNAH(RT[[i]], CR[[i]]))
+  contrast <- h[[1]]$H(times) - h[[2]]$H(times) - h[[3]]$H(times)
+  v <- h[[1]]$Var(times) + h[[2]]$Var(times) + h[[3]]$Var(times)
+  z <- contrast[length(contrast)] / sqrt(v[length(v)])
+  p <- if (is.finite(z)) 2 * min(stats::pnorm(z), 1 - stats::pnorm(z)) else NA_real_
+  .sft_htest(setNames(z, "z"), p,
+             "response times are different than those predicted by the UCIP-OR model",
+             "Resilience test", deparse(substitute(RT)))
+}
+
+
+resilience <- function(RT, CR = NULL, ratio = TRUE, Condition = NULL, Subject = NULL) {
+  converted <- .sft_as_rt_cr(RT, CR, stopping.rule = "OR",
+                             Condition = Condition, Subject = Subject)
+  RT <- converted$RT; CR <- converted$CR
+  if (length(RT) < 3L) stop("RT must contain AB, A, and B conditions.")
+  CR <- .sft_cr_list(RT[1:3], CR)
+  times <- .sft_finite_times(RT[1:3])
+  h <- lapply(1:3, function(i) estimateNAH(RT[[i]], CR[[i]]))
+  if (ratio) {
+    r <- h[[1]]$H(times) / (h[[2]]$H(times) + h[[3]]$H(times))
+    r[!is.finite(r)] <- NA_real_
+    list(Rt = .sft_curve(times, r), Rtest = resilience.test(RT, CR))
+  } else {
+    r <- h[[1]]$H(times) - h[[2]]$H(times) - h[[3]]$H(times)
+    v <- h[[1]]$Var(times) + h[[2]]$Var(times) + h[[3]]$Var(times)
+    list(Rt = .sft_curve(times, r), Var = .sft_curve(times, v),
+         Rtest = resilience.test(RT, CR))
+  }
+}
+

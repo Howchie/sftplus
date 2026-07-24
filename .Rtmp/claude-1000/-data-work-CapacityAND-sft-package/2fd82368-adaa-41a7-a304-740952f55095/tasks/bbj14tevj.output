@@ -1,0 +1,7 @@
+mic.test MIC: 0.1733182  score MIC: 0.1733182  match: TRUE 
+relative_MIC == MIC/mean_RT: TRUE 
+scale-invariant rho: TRUE  (raw MIC doubles: TRUE )
+===== FULL SUITE =====
+extensions: .........................................WW....WWW.........................
+sft-bayes: ..................................................................WWWWW.....WWWWW....
+══ Warnings ════════════════════════════════════════════════════════════════════

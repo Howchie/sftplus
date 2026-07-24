@@ -21,9 +21,11 @@
 \alias{sicDPtest}
 \alias{sictestBayes}
 \alias{simulate_sft}
+\alias{simulate_sft_group}
 \alias{smooth_one_cdf}
-\alias{ucip.bayes.test}
-\alias{ucip.bayes.single_subject.test}
+\alias{capacityGroup.bayes}
+\alias{ucip.bayes}
+\alias{micGroup.bayes}
 \title{CapacityAND extensions for Systems Factorial Technology}
 \description{
   Additional estimators, tests, plotting helpers, and simulation tools bundled
@@ -53,9 +55,11 @@ sicGroupBF(inData, domtest = "ks", plotSIC = TRUE, ...)
 sicDPtest(dat, nbin = NULL, nsamp = 10000L, maxn = 500000L, tolSIC = 5e-2, tolMIC = NULL, ci = .95, seed = NULL)
 sictestBayes(HH, HL, LH, LL, method = c("DP", "IG"), model = NULL, nbin = NULL, nsamp = 10000L, maxn = 500000L, seed = NULL, ...)
 simulate_sft(model = c("lba", "ou"), n, p_vec, design = NULL, salience = FALSE, logical_rules = NULL, sics = FALSE, cdfs = FALSE, a_t = FALSE, subject = 1, backend = c("auto", "Rcpp", "R"), dt = .001, max_time = 2, bridge = TRUE, bridge_exp_cutoff = -20, adaptive = TRUE, adaptive_mode = c("ptol", "distance"), adapt_factor = 32, adapt_eps = 1.5, p_tol = 1e-8, curv_tol = .05, kappa = NULL, tau = NULL)
+simulate_sft_group(model = c("lba", "ou"), n, params, nSubjects = NULL, subject_ids = NULL, combine = TRUE, ...)
 smooth_one_cdf(t, y, smooth_cdf = "none", smooth_spar = .65)
-ucip.bayes.test(RT, CR = NULL, stopping.rule = c("OR", "AND", "STST"), ndraws = 10000L, prior_shape = 2, prior_rate = 1, seed = NULL, hdi = .94, prior_mean = 0, prior_sd = 1, burnin = 1000L, thin = 1L, chains = 4L, rope = NULL, method = c("InvGamma", "HalfNormal", "Centered"), prior_tau_sd = 1, adapt_delta = .95, max_treedepth = 12L, stan_control = list(), tau2_prior_shape = NULL, tau2_prior_rate = NULL, Condition = NULL, Subject = NULL)
-ucip.bayes.single_subject.test(RT, CR = NULL, stopping.rule = c("OR", "AND", "STST"), ndraws = 10000L, seed = NULL, hdi = .94, prior_mean = 0, prior_sd = 1, chains = 4L, rope = NULL, Condition = NULL, Subject = NULL)
+capacityGroup.bayes(inData, CR = NULL, stopping.rule = c("OR", "AND", "STST"), ndraws = 10000L, prior_shape = 2, prior_rate = 0.5, seed = NULL, hdi = .94, prior_mean = 0, prior_sd = 1, burnin = 1000L, thin = 1L, chains = 4L, rope = NULL, method = c("InvGamma", "HalfNormal", "Centered"), prior_tau_sd = 1, adapt_delta = .95, max_treedepth = 12L, stan_control = list(), tau2_prior_shape = NULL, tau2_prior_rate = NULL, Condition = NULL, Subject = NULL, score_method = c("score", "capacity"), var_method = c("analytic", "bootstrap"), n_boot = 2000L)
+ucip.bayes(inData, CR = NULL, stopping.rule = c("OR", "AND", "STST"), ndraws = 10000L, seed = NULL, hdi = .94, prior_mean = 0, prior_sd = 1, chains = 4L, rope = NULL, Condition = NULL, Subject = NULL, score_method = c("score", "capacity"), var_method = c("analytic", "bootstrap"), n_boot = 2000L)
+micGroup.bayes(inData, Condition = NULL, Subject = NULL, correct = TRUE, var_method = c("analytic", "bootstrap"), n_boot = 2000L, ndraws = 10000L, prior_shape = 2, prior_rate = 0.01, seed = NULL, hdi = .94, prior_mean = 0, prior_sd = 0.10, burnin = 1000L, thin = 1L, chains = 4L, rope = NULL, method = c("InvGamma", "HalfNormal", "Centered"), prior_tau_sd = 0.10, adapt_delta = .95, max_treedepth = 12L, stan_control = list(), tau2_prior_shape = NULL, tau2_prior_rate = NULL)
 }
 \arguments{
   \item{RT, CR}{Response times and optional correctness indicators in the standard SFT list format.}
@@ -69,7 +73,7 @@ ucip.bayes.single_subject.test(RT, CR = NULL, stopping.rule = c("OR", "AND", "ST
   \item{Condition, Subject}{When \code{RT} is a row-wise SFT data frame,
     optionally select one condition and one subject for conversion to list
     input.  \code{Condition} must select one condition; the hierarchical
-    \code{ucip.bayes.test} route can retain multiple subjects.}
+    \code{capacityGroup.bayes} route can retain multiple subjects.}
   \item{d}{A simulated data frame for correctness coding.}
   \item{vno, A, b, t0, sv, interval}{Parameters and search interval for the LBA matching helper.}
   \item{rt_list, by}{RT vectors and grid spacing for time-range construction.}
@@ -85,17 +89,23 @@ ucip.bayes.single_subject.test(RT, CR = NULL, stopping.rule = c("OR", "AND", "ST
   \item{domtest, plotSIC}{Dominance test method and plotting switch.}
   \item{HH, HL, LH, LL}{The four SIC response-time samples.}
   \item{dat}{A four-element list of SIC samples in HH, HL, LH, LL order.}
-  \item{method}{For \code{ucip.bayes.test}, the hierarchical route: \code{InvGamma} is the conjugate Gibbs sampler, \code{HalfNormal} is non-centred Stan, and \code{Centered} is centred Stan. For \code{sictestBayes}, \code{DP} is implemented for Bayesian SIC testing, while the legacy \code{IG} route requires external Stan model files.}
+  \item{method}{For \code{capacityGroup.bayes}, the hierarchical route: \code{InvGamma} is the conjugate Gibbs sampler, \code{HalfNormal} is non-centred Stan, and \code{Centered} is centred Stan. For \code{sictestBayes}, \code{DP} is implemented for Bayesian SIC testing, while the legacy \code{IG} route requires external Stan model files.}
   \item{nbin}{Number of bins for the Bayesian SIC/dominance calculations.}
   \item{model}{Simulation model or optional legacy external Bayesian model object.}
   \item{design, salience, logical_rules, sics, cdfs, a_t, subject}{Simulation design, rule, output, and subject controls.}
+  \item{params}{Per-subject simulation parameters for \code{simulate_sft_group}. Either a named numeric vector (one \code{p_vec}, recycled to every subject) or a matrix/data frame with one row per subject and named columns giving each subject's process parameters (drifts, thresholds, non-decision time, etc.).}
+  \item{nSubjects}{Number of subjects for \code{simulate_sft_group}. Required (and inferred as 1 if omitted) when \code{params} is a vector; when \code{params} is a matrix it defaults to the number of rows and, if supplied, must match it.}
+  \item{subject_ids}{Optional character vector of subject labels for \code{simulate_sft_group}. Defaults to the row names of \code{params} when present, otherwise zero-padded \code{"Subject001"}, \code{"Subject002"}, ... labels.}
+  \item{combine}{For \code{simulate_sft_group}, whether to return one row-bound data frame (the default, directly usable by the group-level functions) or the list of per-subject \code{simulate_sft} results.}
   \item{stopping.rule}{The logical stopping rule for the UCIP Bayesian companion.}
   \item{ndraws, nsamp, maxn}{Monte Carlo sizes. Reduce these for exploratory work and increase them for final analyses.}
   \item{tolSIC, tolMIC, ci}{Model-classification tolerances and Monte Carlo interval mass for \code{sicDPtest}.}
-  \item{prior_shape, prior_rate}{Shape and rate of the inverse-Gamma prior on between-subject variance \eqn{tau^2} in \code{ucip.bayes.test}.}
+  \item{prior_shape, prior_rate}{Shape and rate of the inverse-Gamma prior on between-subject variance \eqn{tau^2} in \code{capacityGroup.bayes}.}
   \item{tau2_prior_shape, tau2_prior_rate}{Clearer aliases for \code{prior_shape} and \code{prior_rate}; when supplied, these override the older argument names.}
-  \item{prior_mean, prior_sd}{Normal prior mean and standard deviation for the population UCIP effect \eqn{mu}.}
-  \item{burnin, thin, chains}{Gibbs sampler burn-in, thinning interval, and number of chains for \code{ucip.bayes.test}.}
+  \item{prior_mean, prior_sd}{Normal prior mean and standard deviation for the population UCIP effect \eqn{mu}. For \code{micGroup.bayes} the effect is the dimensionless relative MIC, so the default \code{prior_sd = 0.10} encodes population MICs within roughly \eqn{\pm 20\%} of mean RT rather than a millisecond scale.}
+  \item{var_method, n_boot}{Sampling-variance method for the per-participant effect precision in \code{ucip.bayes}, \code{capacityGroup.bayes}, and \code{micGroup.bayes}. \code{"analytic"} (default) uses the closed-form variance (martingale/delta method for the UCIP score and log-capacity, delta method for the relative MIC); \code{"bootstrap"} replaces it with a within-participant resampling variance over \code{n_boot} replicates, a distribution-robust alternative reported alongside the analytic value.}
+  \item{correct}{For \code{micGroup.bayes}, keep only correct trials so the estimand is the conditional-correct interaction contrast.}
+  \item{burnin, thin, chains}{Gibbs sampler burn-in, thinning interval, and number of chains for \code{capacityGroup.bayes}.}
   \item{prior_tau_sd}{Positive scale of the half-normal prior on \eqn{tau} for the Stan methods.}
   \item{adapt_delta, max_treedepth, stan_control}{NUTS adaptation controls passed to the Stan methods.}
   \item{rope}{Optional positive practical-equivalence threshold on the \eqn{theta} scale. If NULL, no ROPE probability is reported.}
@@ -122,7 +132,20 @@ ucip.bayes.single_subject.test(RT, CR = NULL, stopping.rule = c("OR", "AND", "ST
   \code{shared_capacity_tau}, and \code{shared_tau} are also accepted in
   \code{p_vec}.
 
-  \code{ucip.bayes.test} is a Bayesian companion to the UCIP/Cz z test. It
+  \code{simulate_sft_group} generates data for several participants by calling
+  \code{simulate_sft} once per subject and row-binding the results. Supply the
+  process parameters as a subject-by-parameter matrix (one row per participant,
+  named columns), or as a single named \code{params} vector together with
+  \code{nSubjects} to simulate that many participants from a common parameter
+  set. Each participant is labelled through the \code{Subject} column and, by
+  default, the function returns a single data frame with \code{RT},
+  \code{Channel1}, \code{Channel2}, \code{Correct}, \code{Subject}, and
+  \code{Condition} columns (plus the per-trial bookkeeping columns produced by
+  \code{simulate_sft}), ready to pass to \code{capacityGroup},
+  \code{assessmentGroup}, or \code{sicGroup}. Passing \code{combine = FALSE}
+  returns the list of full per-subject \code{simulate_sft} results instead.
+
+  \code{capacityGroup.bayes} is a Bayesian companion to the UCIP/Cz z test. It
   extracts the UCIP score numerator \eqn{U_i} and information \eqn{V_i} for
   each participant, then fits the score/information hierarchy
   \eqn{U_i | theta_i ~ N(V_i theta_i, V_i)},
@@ -144,8 +167,8 @@ ucip.bayes.single_subject.test(RT, CR = NULL, stopping.rule = c("OR", "AND", "ST
   \code{Cz} score. Posterior probabilities and HDIs are reported separately
   for the population effect and each participant effect.
 
-  For one participant, \code{ucip.bayes.test} delegates to
-  \code{ucip.bayes.single_subject.test}, which uses the analytic
+  For one participant, \code{capacityGroup.bayes} delegates to
+  \code{ucip.bayes}, which uses the analytic
   Normal-Normal posterior and returns no population hierarchy. The function
   includes prior- and posterior-predictive score draws, split-chain
   \code{Rhat}, bulk and tail effective sample sizes, and posterior shrinkage
@@ -153,5 +176,24 @@ ucip.bayes.single_subject.test(RT, CR = NULL, stopping.rule = c("OR", "AND", "ST
   probability is reported only when a scientifically chosen \code{rope} is
   supplied. A formal Bayes factor for the UCIP null would require an
   explicitly constrained generative model and is not returned here.
+
+  \code{micGroup.bayes} is the mean-interaction-contrast companion. It reads the
+  salience \eqn{2\times2} cells from \code{Channel1} and \code{Channel2}
+  (\code{2 = High}, \code{1 = Low}), forms each participant's cell means, and
+  pools the \emph{relative} MIC
+  \eqn{rho_i = MIC_i / M_i} with the same normal-normal hierarchy, where
+  \eqn{MIC_i = bar T_{HH} - bar T_{HL} - bar T_{LH} + bar T_{LL}} and
+  \eqn{M_i} is the equal-weight grand-mean RT of the four cells. Normalising by
+  \eqn{M_i} makes the estimand dimensionless and invariant to multiplicative
+  differences in participant speed, while preserving the sign, the exact-null
+  boundary (\eqn{rho = 0} iff \eqn{MIC = 0}), and the interpretation of the MIC
+  as the (now normalised) signed area under the survivor interaction contrast.
+  A positive \eqn{rho} is over-additive (parallel self-terminating or coactive),
+  a negative \eqn{rho} is under-additive (parallel exhaustive), and \eqn{rho}
+  near zero is additive (serial). The \code{rope} is a proportional
+  practical-equivalence threshold: \code{rope = 0.025} treats interactions below
+  \eqn{2.5\%} of mean RT as negligible. A single participant is fitted with the
+  analytic posterior, and the sampler, diagnostics, predictive checks, and
+  shrinkage machinery are shared with \code{capacityGroup.bayes}.
 }
 \keyword{ sft }

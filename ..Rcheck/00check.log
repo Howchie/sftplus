@@ -1,0 +1,123 @@
+* using log directory ‘/data/work/CapacityAND/sft_package/..Rcheck’
+* using R version 4.6.0 (2026-04-24)
+* using platform: x86_64-pc-linux-gnu
+* R was compiled by
+    cc (Ubuntu 11.4.0-1ubuntu1~22.04.3) 11.4.0
+    GNU Fortran (Ubuntu 11.4.0-1ubuntu1~22.04.3) 11.4.0
+* running under: Ubuntu 22.04.4 LTS
+* using session charset: UTF-8
+* current time: 2026-07-24 00:48:21 UTC
+* checking for file ‘./DESCRIPTION’ ... OK
+* this is package ‘sftplus’ version ‘1.0.0’
+* package encoding: UTF-8
+* checking package namespace information ... OK
+* checking package dependencies ... OK
+* checking if this is a source package ... OK
+* checking if there is a namespace ... OK
+* checking for executable files ... OK
+* checking for hidden files and directories ... NOTE
+Found the following hidden files and directories:
+  .gitignore
+  sftbayes/.gitignore
+  sftbayes/parametricMIC/.micmodel_inits.R.swp
+  ..Rcheck
+  .Rtmp
+  .git
+  sftbayes/.git
+These were most likely included in error. See section ‘Package
+structure’ in the ‘Writing R Extensions’ manual.
+* checking for portable file names ... WARNING
+Found the following file with a non-portable file name:
+  sftbayes/Van Zandt et al (2016).pdf
+These are not fully portable file names.
+See section ‘Package structure’ in the ‘Writing R Extensions’ manual.
+Found the following non-portable file paths:
+  sftplus/.Rtmp/claude-1000/-data-work-CapacityAND-sft-package/00762599-3c8b-428e-ba82-ee365247f98e/tasks/b6ntnx89r.output
+  sftplus/.Rtmp/claude-1000/-data-work-CapacityAND-sft-package/00762599-3c8b-428e-ba82-ee365247f98e/tasks/bido6kscn.output
+  sftplus/.Rtmp/claude-1000/-data-work-CapacityAND-sft-package/00762599-3c8b-428e-ba82-ee365247f98e/tasks/bm3tp3rvp.output
+  sftplus/.Rtmp/claude-1000/-data-work-CapacityAND-sft-package/00762599-3c8b-428e-ba82-ee365247f98e/tasks/bplanr8dw.output
+  sftplus/.Rtmp/claude-1000/-data-work-CapacityAND-sft-package/00762599-3c8b-428e-ba82-ee365247f98e/tasks/bq6k4pid0.output
+  sftplus/.Rtmp/claude-1000/-data-work-CapacityAND-sft-package/00762599-3c8b-428e-ba82-ee365247f98e/tasks/bx98z9ffs.output
+  sftplus/.Rtmp/claude-1000/-data-work-CapacityAND-sft-package/00762599-3c8b-428e-ba82-ee365247f98e/tasks/byav5nm14.output
+  sftplus/.Rtmp/claude-1000/-data-work-CapacityAND-sft-package/00762599-3c8b-428e-ba82-ee365247f98e/tasks/bz98tlxnu.output
+  sftplus/.Rtmp/claude-1000/-data-work-CapacityAND-sft-package/807047c9-af65-474b-b09d-6aacda9ec15f/tasks/b2yhr1os9.output
+  sftplus/.Rtmp/claude-1000/-data-work-CapacityAND-sft-package/807047c9-af65-474b-b09d-6aacda9ec15f/tasks/b4c2imohz.output
+  sftplus/.Rtmp/claude-1000/-data-work-CapacityAND-sft-package/807047c9-af65-474b-b09d-6aacda9ec15f/tasks/biw3qsvxc.output
+  sftplus/.Rtmp/claude-1000/-data-work-CapacityAND-sft-package/807047c9-af65-474b-b09d-6aacda9ec15f/tasks/bnuav8cck.output
+  sftplus/.Rtmp/claude-1000/-data-work-CapacityAND-sft-package/807047c9-af65-474b-b09d-6aacda9ec15f/tasks/bwmvs7ux9.output
+  sftplus/.Rtmp/claude-1000/-data-work-CapacityAND-sft-package/00762599-3c8b-428e-ba82-ee365247f98e/tasks
+  sftplus/.Rtmp/claude-1000/-data-work-CapacityAND-sft-package/807047c9-af65-474b-b09d-6aacda9ec15f/tasks
+
+Tarballs are only required to store paths of up to 100 bytes and cannot
+store those of more than 256 bytes, with restrictions including to 100
+bytes for the final component.
+See section ‘Package structure’ in the ‘Writing R Extensions’ manual.
+* checking for sufficient/correct file permissions ... OK
+* checking whether package ‘sftplus’ can be installed ... OK
+* checking installed package size ... OK
+* checking package directory ... OK
+* checking DESCRIPTION meta-information ... NOTE
+Checking should be performed on sources prepared by ‘R CMD build’.
+* checking top-level files ... OK
+* checking for left-over files ... OK
+* checking index information ... OK
+* checking package subdirectories ... WARNING
+Found the following directory with the name of a check directory:
+  ./..Rcheck
+Most likely, these were included erroneously.
+* checking code files for non-ASCII characters ... OK
+* checking R files for syntax errors ... OK
+* checking whether the package can be loaded ... OK
+* checking whether the package can be loaded with stated dependencies ... OK
+* checking whether the package can be unloaded cleanly ... OK
+* checking whether the namespace can be loaded with stated dependencies ... OK
+* checking whether the namespace can be unloaded cleanly ... OK
+* checking loading without being on the library search path ... OK
+* checking dependencies in R code ... OK
+* checking S3 generic/method consistency ... OK
+* checking replacement functions ... OK
+* checking foreign function calls ... OK
+* checking R code for possible problems ... OK
+* checking Rd files ... OK
+* checking Rd metadata ... OK
+* checking Rd cross-references ... OK
+* checking for missing documentation entries ... OK
+* checking for code/documentation mismatches ... WARNING
+Codoc mismatches from Rd file 'sft_plus-extensions.Rd':
+ucip.bayes
+  Code: function(inData, CR = NULL, stopping.rule = c("OR", "AND",
+                 "STST"), ndraws = 10000L, seed = NULL, hdi = 0.94,
+                 prior_mean = 0, prior_sd = 1, chains = 4L, rope =
+                 NULL, Condition = NULL, Subject = NULL, score_method =
+                 c("score", "capacity"))
+  Docs: function(inData, CR = NULL, stopping.rule = c("OR", "AND",
+                 "STST"), ndraws = 10000L, seed = NULL, hdi = 0.94,
+                 prior_mean = 0, prior_sd = 1, chains = 4L, rope =
+                 NULL, Condition = NULL, Subject = NULL)
+  Argument names in code not in docs:
+    score_method
+
+* checking Rd \usage sections ... WARNING
+Undocumented arguments in Rd file 'semiparametricSFT.bayes.Rd'
+  ‘data’
+
+Undocumented arguments in Rd file 'sft_plus-extensions.Rd'
+  ‘score_method’
+
+Functions with \usage entries need to have the appropriate \alias
+entries, and all their arguments documented.
+The \usage entries must correspond to syntactically valid R code.
+See chapter ‘Writing R documentation files’ in the ‘Writing R
+Extensions’ manual.
+* checking Rd contents ... OK
+* checking for unstated dependencies in examples ... OK
+* checking contents of ‘data’ directory ... OK
+* checking data for non-ASCII characters ... OK
+* checking data for ASCII and uncompressed saves ... OK
+* checking examples ... OK
+* checking for unstated dependencies in ‘tests’ ... OK
+* checking tests ... OK
+  Running ‘testthat.R’
+* checking PDF version of manual ... OK
+* DONE
+Status: 4 WARNINGs, 2 NOTEs
