@@ -11,7 +11,7 @@ ucip.bayes <- function(inData, CR = NULL,
                        hdi = .94, prior_mean = 0, prior_sd = NULL,
                        chains = 4L, rope = NULL,
                        Condition = NULL, Subject = NULL,
-                       score_method = c("standardized", "multiplicative"),
+                       score_method = c("score", "standardized", "multiplicative"),
                        var_method = c("analytic", "bootstrap"), n_boot = 2000L) {
   stopping.rule <- match.arg(stopping.rule)
   score_method <- .sft_score_method(score_method)
@@ -35,23 +35,23 @@ ucip.bayes <- function(inData, CR = NULL,
   scored <- .sft_ucip_score_data(input, stopping.rule, score_method,
                                  var_method = var_method, n_boot = n_boot)
   # A NULL prior_sd resolves to the scale-aware default for this score_method
-  # (anchored on the standardized reference-information phi scale); an explicit
-  # value is kept as supplied.
+  # (anchored on the theta log-hazard-ratio effect scale and mapped onto
+  # whichever scale is active); an explicit value is kept as supplied.
   prior_sd <- .sft_resolve_priors(score_method, scored$V_ref,
                                   prior_sd = prior_sd)$prior_sd
   effect_hat <- scored$effect_hat[[1L]]
   precision <- scored$precision[[1L]]
   effect_name <- scored$effect_name
   observed_name <- paste0(effect_name, "_hat")
-  precision_name <- if (score_method == "multiplicative") "P" else "W"
+  precision_name <- .sft_precision_name(score_method)
 
   fit <- .sft_normal_analytic_fit(effect_hat, precision, input$subject[[1L]],
                                   effect_name, ndraws, chains, prior_mean,
                                   prior_sd, hdi, rope)
-  # An exact point null (effect = 0 is the UCIP prediction) applies on both
-  # scales, and both also carry a coherent interval null: one standardized phi
-  # unit is a Cz shift for a median-information participant, and eta = log(A/B)
-  # has an interpretable capacity-ratio ROPE.
+  # An exact point null (effect = 0 is the UCIP prediction) applies on every
+  # scale, and each also carries a coherent interval null: theta is a log hazard
+  # ratio, phi is a reference-Cz shift, and eta = log(A/B) is a log capacity
+  # ratio, so a ROPE is interpretable in all three.
   bayes_factor <- .sft_analytic_bayes_factor(
     fit, prior_mean, prior_sd, rope, point = TRUE, interval = TRUE)
   effect_draws <- fit$effect_draws
@@ -83,6 +83,10 @@ ucip.bayes <- function(inData, CR = NULL,
     diagnostics = fit$diagnostics,
     shrinkage_summary = fit$shrinkage_summary,
     shrinkage_draws = fit$shrinkage_draws,
+    # Enough for prior_sensitivity() to refit without rescoring.
+    refit_data = list(effect_hat = scored$effect_hat,
+                      precision = scored$precision,
+                      subject = input$subject, effect_name = effect_name),
     method = "Analytic single-subject normal-normal posterior",
     method_code = "Analytic",
     alternative = paste("the participant UCIP", stopping.rule, "effect is nonzero"),
@@ -92,11 +96,7 @@ ucip.bayes <- function(inData, CR = NULL,
                             observed_name, effect_name, precision_name),
       subject = sprintf("%s ~ Normal(mean = prior_mean, sd = prior_sd)",
                         effect_name),
-      interpretation = if (score_method == "multiplicative") {
-        "exp(eta) is the participant weighted capacity ratio"
-      } else {
-        "phi is the reference-information standardized score effect (Cz for a participant with median information)"
-      },
+      interpretation = .sft_effect_interpretation(score_method),
       score_method = score_method,
       var_method = var_method,
       hierarchy = FALSE
@@ -108,23 +108,33 @@ ucip.bayes <- function(inData, CR = NULL,
 }
 
 
-# Hierarchical Bayesian companion to the UCIP/Cz score test. The default
-# score_method = "standardized" pools the reference-information phi scale (a Cz
-# shift for a median-information participant); score_method = "multiplicative"
-# uses eta = log(A/B) with its delta-method precision (formerly "capacity",
-# still accepted as an alias). The InvGamma method is the exact conjugate Gibbs
-# sampler; HalfNormal is a non-centred Stan model and Centered is its centred
-# Stan counterpart, both with a half-normal prior on tau.
+# Hierarchical Bayesian companion to the UCIP/Cz score test.
+#
+# The default score_method = "score" pools theta = U / V, the Peto one-step
+# estimate of the log hazard ratio for the UCIP contrast, with precision V.
+# theta is the effect the Cz statistic tests: Cz_i = theta_i * sqrt(V_i)
+# reproduces ucip.test() exactly. Its location is stable as trials accumulate
+# while V grows linearly with them, which is what makes a fixed prior width a
+# genuine effect-size prior that the data can outweigh.
+#
+# score_method = "standardized" reports the same fit on the reference-Cz scale
+# phi = theta * sqrt(V_ref); since that is a deterministic linear map given the
+# data, it returns the identical posterior under the default priors, just in Cz
+# units. score_method = "multiplicative" instead uses eta = log(A/B) with its
+# delta-method precision (formerly "capacity", still accepted as an alias).
+#
+# The InvGamma method is the exact conjugate Gibbs sampler; HalfNormal is a
+# non-centred Stan model and Centered is its centred Stan counterpart, both with
+# a half-normal prior on tau.
 #
 # prior_mean stays at 0: the population score-effect prior is centred on the
 # UCIP benchmark (mu = 0 == unlimited-capacity independent parallel). The
 # remaining prior widths (prior_sd on mu, prior_tau_sd / prior_shape / prior_rate
-# on the between-subject scale tau) default to NULL and are resolved to
-# scale-aware values by .sft_default_priors() once the data are scored: the
-# standardized phi scale is the anchor (mu ~ N(0, 0.5^2), tau ~ HalfNormal(0, 1),
-# tau^2 ~ InvGamma(2, 0.5)) and the multiplicative scale carries the locally
-# corresponding widths. Supplying any of these arguments explicitly overrides
-# its default.
+# on the between-subject scale tau) default to NULL and are resolved by
+# .sft_default_priors() once the data are scored: mu ~ N(0, 0.5^2) and
+# tau ~ HalfNormal(0, 0.5) on the theta log-hazard-ratio scale, pushed through
+# the sqrt(V_ref) map for "standardized". Supplying any of these arguments
+# explicitly overrides its default.
 capacityGroup.bayes <- function(inData, CR = NULL, stopping.rule = c("OR", "AND", "STST"),
                             ndraws = 10000L, prior_shape = NULL, prior_rate = NULL,
                             seed = NULL, hdi = .94, prior_mean = 0,
@@ -135,7 +145,7 @@ capacityGroup.bayes <- function(inData, CR = NULL, stopping.rule = c("OR", "AND"
                             max_treedepth = 12L, stan_control = list(),
                             tau2_prior_shape = NULL, tau2_prior_rate = NULL,
                             Condition = NULL, Subject = NULL,
-                            score_method = c("standardized", "multiplicative"),
+                            score_method = c("score", "standardized", "multiplicative"),
                             var_method = c("analytic", "bootstrap"), n_boot = 2000L) {
   stopping.rule <- match.arg(stopping.rule)
   score_method <- .sft_score_method(score_method)
@@ -148,145 +158,46 @@ capacityGroup.bayes <- function(inData, CR = NULL, stopping.rule = c("OR", "AND"
                            prior_rate, prior_mean, prior_sd, prior_tau_sd,
                            hdi, rope, adapt_delta, max_treedepth)
   .sft_validate_boot(var_method, n_boot)
-  converted <- .sft_as_rt_cr(inData, CR, stopping.rule = stopping.rule,
-                             Condition = Condition, Subject = Subject,
-                             by_subject = "always")
-  RT <- converted$RT; CR <- converted$CR
-  input <- .sft_subject_ucip_input(RT, CR)
 
-  # A one-subject input is deliberately routed to the analytic posterior.
-  # The hierarchy cannot identify a population mean and between-subject scale
-  # from one participant, even though priors would make the Gibbs model proper.
-  if (length(input$RT) == 1L) {
-    return(ucip.bayes(
-      inData = RT, CR = CR, stopping.rule = stopping.rule, ndraws = ndraws,
-      seed = seed, hdi = hdi, prior_mean = prior_mean, prior_sd = prior_sd,
-      chains = chains, rope = rope, score_method = score_method,
-      var_method = var_method, n_boot = n_boot
-    ))
-  }
-
-  # The seed is set before scoring so an optional bootstrap variance and the
-  # sampler share one reproducible RNG stream; analytic scoring is deterministic.
+  grouped <- .sft_condition_input(inData, CR, stopping.rule = stopping.rule,
+                                  Condition = Condition, Subject = Subject)
   old_seed <- .sft_bayes_seed(seed)
   on.exit(.sft_restore_bayes_seed(old_seed), add = TRUE)
-  scored <- .sft_ucip_score_data(input, stopping.rule, score_method,
-                                 var_method = var_method, n_boot = n_boot)
-  # Adopt the surviving participants (degenerate subjects may have been dropped).
-  input$subject <- scored$subject
-  if (length(input$subject) < 2L) {
-    stop("Fewer than two participants remain after dropping degenerate subjects; ",
-         "use ucip.bayes() for a single participant.",
-         call. = FALSE)
-  }
-  effect_hat <- scored$effect_hat
-  precision <- scored$precision
-  effect_name <- scored$effect_name
-  observed_name <- paste0(effect_name, "_hat")
-  precision_name <- if (score_method == "multiplicative") "P" else "W"
+  scored <- .sft_condition_score(
+    grouped, function(input) .sft_ucip_score_data(
+      input, stopping.rule, score_method, var_method = var_method,
+      n_boot = n_boot))
 
-  # Resolve any NULL prior hyperparameter to its scale-aware default now that
-  # V_ref is known; explicit user values (including the tau2_prior_* aliases
-  # applied above) pass through unchanged.
-  priors <- .sft_resolve_priors(score_method, scored$V_ref, prior_sd,
+  # A one-subject, one-condition input is deliberately routed to the analytic
+  # posterior: the hierarchy cannot identify a population mean and a
+  # between-subject scale from one participant.
+  if (length(scored$effect_hat) == 1L && !scored$multi_condition) {
+    one <- grouped$conditions[[1L]]
+    return(ucip.bayes(
+      inData = one$RT[[1L]], CR = one$CR[[1L]], stopping.rule = stopping.rule,
+      ndraws = ndraws, seed = seed, hdi = hdi, prior_mean = prior_mean,
+      prior_sd = prior_sd, chains = chains, rope = rope,
+      score_method = score_method, var_method = var_method, n_boot = n_boot))
+  }
+  if (length(scored$effect_hat) < 2L) {
+    stop("Fewer than two estimable participant effects remain; ",
+         "use ucip.bayes() for a single participant.", call. = FALSE)
+  }
+
+  # V_ref is condition-specific, so report one per condition when several are fit.
+  v_ref <- vapply(scored$per_condition, function(p) p$V_ref, numeric(1))
+  if (!scored$multi_condition) v_ref <- unname(v_ref[[1L]])
+  priors <- .sft_resolve_priors(score_method, v_ref[[1L]], prior_sd,
                                 prior_tau_sd, prior_shape, prior_rate)
-  prior_sd <- priors$prior_sd
-  prior_tau_sd <- priors$prior_tau_sd
-  prior_shape <- priors$prior_shape
-  prior_rate <- priors$prior_rate
-
-  fit <- .sft_normal_hierarchy_fit(effect_hat, precision, input$subject,
-                                   effect_name, method, ndraws, burnin, thin,
-                                   chains, prior_mean, prior_sd, prior_shape,
-                                   prior_rate, prior_tau_sd, seed, adapt_delta,
-                                   max_treedepth, stan_control, hdi, rope)
-  mu_draws <- fit$mu_draws
-  tau_draws <- fit$tau_draws
-  effect_draws <- fit$effect_draws
-  summary <- fit$summary
-  population <- fit$population
-  subject_summary <- fit$subject_summary
-  posterior_predictive <- fit$posterior_predictive
-  shrinkage_draws <- fit$shrinkage_draws
-  shrinkage_summary <- fit$shrinkage_summary
-  draws <- fit$draws
-  diagnostics <- fit$diagnostics
-  prior_predictive <- fit$prior_predictive
-  stan_fit <- fit$stan_fit
-  sampler_diagnostics <- fit$sampler_diagnostics
-  # UCIP is an exact theoretical prediction, so the population mean carries a
-  # point null (mu = 0); the interval null applies on both scales, whose ROPEs
-  # are interpretable (a Cz shift for a median-information participant on the
-  # standardized phi scale, a capacity ratio on the multiplicative eta scale).
-  bayes_factor <- .sft_hierarchy_bayes_factor(
-    fit, prior_mean, prior_sd, rope, point = TRUE, interval = TRUE)
-  prior <- if (method == "InvGamma") {
-    list(mu = list(mean = prior_mean, sd = prior_sd),
-         tau2 = list(family = "inverse-Gamma", shape = prior_shape,
-                     rate = prior_rate), rope = rope)
-  } else {
-    list(mu = list(mean = prior_mean, sd = prior_sd),
-         tau = list(family = "half-Normal", sd = prior_tau_sd), rope = rope)
-  }
-  model <- if (method == "InvGamma") {
-    list(observation = sprintf("%s[i] ~ Normal(mean = %s[i], sd = 1 / sqrt(%s[i]))",
-                               observed_name, effect_name, precision_name),
-         subject = sprintf("%s[i] ~ Normal(mean = mu, sd = tau)", effect_name),
-         population = "mu ~ Normal(mean = prior_mean, sd = prior_sd)",
-         interpretation = if (score_method == "multiplicative") {
-           "exp(eta[i]) is the participant weighted capacity ratio"
-         } else {
-           "phi is the reference-information standardized score effect (Cz for a participant with median information)"
-         },
-         score_method = score_method, var_method = var_method,
-         parameterization = "centered", sampler = "conjugate Gibbs")
-  } else {
-    list(observation = sprintf("%s[i] ~ Normal(mean = %s[i], sd = 1 / sqrt(%s[i]))",
-                               observed_name, effect_name, precision_name),
-         subject = sprintf("%s[i] ~ Normal(mean = mu, sd = tau)", effect_name),
-         population = "mu ~ Normal(mean = prior_mean, sd = prior_sd)",
-         interpretation = if (score_method == "multiplicative") {
-           "exp(eta[i]) is the participant weighted capacity ratio"
-         } else {
-           "phi is the reference-information standardized score effect (Cz for a participant with median information)"
-         },
-         score_method = score_method, var_method = var_method,
-         tau = "tau ~ HalfNormal(prior_tau_sd)",
-         parameterization = if (method == "Centered") "centered" else "non-centred",
-         sampler = "Stan NUTS")
-  }
-  list(
-    statistic = setNames(mean(mu_draws), "mu"),
-    posterior_probability = list(
-      population_super = mean(mu_draws > 0),
-      population_limited = mean(mu_draws < 0),
-      population_rope = if (is.null(rope)) NA_real_ else mean(abs(mu_draws) <= rope),
-      subject_super = setNames(colMeans(effect_draws > 0), input$subject),
-      subject_limited = setNames(colMeans(effect_draws < 0), input$subject),
-      subject_rope = setNames(if (is.null(rope)) rep(NA_real_, length(effect_hat)) else
-                                colMeans(abs(effect_draws) <= rope), input$subject)
-    ),
-    bayes_factor = bayes_factor,
-    summary = summary, population_summary = population,
-    subject_summary = subject_summary, score = scored$score,
-    V_ref = scored$V_ref, draws = draws,
-    prior_predictive = prior_predictive,
-    posterior_predictive = posterior_predictive,
-    diagnostics = diagnostics,
-    sampler_diagnostics = sampler_diagnostics,
-    shrinkage_summary = shrinkage_summary,
-    shrinkage_draws = shrinkage_draws,
-    stan_fit = stan_fit,
-    method = if (method == "InvGamma") {
-      "Hierarchical Bayesian UCIP score/information model"
-    } else {
-      paste(method, "Bayesian UCIP score/information model")
-    },
-    method_code = method,
-    score_method = score_method, var_method = var_method,
+  .sft_normal_group_result(
+    scored = scored, priors = priors, prior_mean = prior_mean, method = method,
+    ndraws = ndraws, burnin = burnin, thin = thin, chains = chains, seed = seed,
+    adapt_delta = adapt_delta, max_treedepth = max_treedepth,
+    stan_control = stan_control, hdi = hdi, rope = rope,
+    label = "UCIP score/information",
     alternative = paste("the population UCIP", stopping.rule, "effect is nonzero"),
-    prior = prior, model = model,
-    stopping.rule = stopping.rule, hdi = hdi, ndraws = ndraws,
-    burnin = burnin, thin = thin, chains = chains, seed = seed
-  )
+    interpretation = .sft_effect_interpretation(score_method),
+    precision_name = .sft_precision_name(score_method),
+    extra = list(V_ref = v_ref, score_method = score_method,
+                 var_method = var_method, stopping.rule = stopping.rule))
 }

@@ -2,6 +2,68 @@
 # and SIC/MIC/effects/predictive derivations.
 
 
+# Lower-triangular indicator M[k, j] = 1 iff k <= j, cached per grid size. Right-
+# multiplying by it turns a row of per-bin quantities into its running total.
+.sft_bayes_cumsum_env <- new.env(parent = emptyenv())
+
+.sft_bayes_cumsum_matrix <- function(J) {
+  key <- as.character(J)
+  if (!exists(key, envir = .sft_bayes_cumsum_env, inherits = FALSE)) {
+    assign(key, upper.tri(matrix(0, J, J), diag = TRUE) * 1,
+           envir = .sft_bayes_cumsum_env)
+  }
+  get(key, envir = .sft_bayes_cumsum_env, inherits = FALSE)
+}
+
+
+# Cumulative hazard from log-hazards on a common bin grid:
+#   H[..., j] = sum_{k <= j} exp(eta[..., k]) * widths[k]
+# eta may be draws-by-bin or draws-by-subject-by-bin; the bin index is always
+# last. Flattening the leading margins and using one matrix product replaces the
+# per-draw (and per-subject) R loops this file used to run, which dominated the
+# cost of every posterior transform and predictive check.
+.sft_bayes_cumhaz <- function(eta, widths) {
+  d <- dim(eta)
+  if (is.null(d)) d <- c(1L, length(eta))
+  J <- d[[length(d)]]
+  if (length(widths) != J) {
+    stop("widths must have one entry per bin.", call. = FALSE)
+  }
+  x <- exp(as.numeric(eta))
+  dim(x) <- c(length(x) / J, J)
+  out <- (x * rep(widths, each = nrow(x))) %*% .sft_bayes_cumsum_matrix(J)
+  dim(out) <- d
+  dimnames(out) <- dimnames(eta)
+  out
+}
+
+
+# Mean over one margin of an array, dropping it. Equivalent to
+#   apply(x, setdiff(seq_along(dim(x)), margin), mean, na.rm = na.rm)
+# but vectorised. apply() issues one scalar mean() call per retained cell, which
+# on a draws-by-subject-by-bin-by-cell array is hundreds of thousands of calls
+# and dominated the cost of every salience transform and predictive check.
+.sft_bayes_mean_over <- function(x, margin, na.rm = TRUE) {
+  d <- dim(x)
+  if (is.null(d)) return(mean(x, na.rm = na.rm))
+  keep <- setdiff(seq_along(d), margin)
+  y <- if (identical(as.integer(margin), length(d))) x else aperm(x, c(keep, margin))
+  flat <- matrix(as.numeric(y), ncol = prod(d[margin]))
+  if (isTRUE(na.rm)) {
+    ok <- !is.na(flat)
+    cnt <- rowSums(ok)
+    flat[!ok] <- 0
+    out <- rowSums(flat) / cnt
+    # apply(mean, na.rm = TRUE) yields NaN for an all-missing cell; match it.
+    out[cnt == 0L] <- NaN
+  } else {
+    out <- rowMeans(flat)
+  }
+  if (length(keep) > 1L) dim(out) <- d[keep]
+  out
+}
+
+
 .sft_bayes_dim_array <- function(x, draws, I, J, name) {
   d <- dim(x)
   if (is.null(d) || length(d) != 3L || !all(d == c(draws, I, J))) {
@@ -17,12 +79,7 @@
   if (!all(required %in% names(log_hazard))) stop("log_hazard needs A, B, and AB arrays.",
                                                      call. = FALSE)
   draws <- dim(log_hazard$A)[1L]; I <- dim(log_hazard$A)[2L]; J <- dim(log_hazard$A)[3L]
-  h <- lapply(log_hazard, exp)
-  H <- lapply(h, function(x) {
-    out <- x
-    for (m in seq_len(draws)) for (i in seq_len(I)) out[m, i, ] <- cumsum(x[m, i, ] * widths)
-    out
-  })
+  H <- lapply(log_hazard, .sft_bayes_cumhaz, widths = widths)
   D <- H$AB - H$A - H$B
   denom <- H$A + H$B
   C <- H$AB / denom
@@ -33,14 +90,10 @@
   out <- list(H_A = H$A, H_B = H$B, H_AB = H$AB, D = D, C = C,
               subject = list(H_A = H$A, H_B = H$B, H_AB = H$AB, D = D, C = C),
               times = times, widths = widths, subjects = subjects,
-              identity_error = H$AB - H$A - H$B)
+              # identically D; kept as an alias rather than recomputed.
+              identity_error = D)
   if (!is.null(new_subject)) {
-    new_h <- lapply(new_subject, exp)
-    new_H <- lapply(new_h, function(x) {
-      out_x <- x
-      for (m in seq_len(draws)) out_x[m, ] <- cumsum(x[m, ] * widths)
-      out_x
-    })
+    new_H <- lapply(new_subject, .sft_bayes_cumhaz, widths = widths)
     new_D <- new_H$AB - new_H$A - new_H$B
     new_C <- new_H$AB / (new_H$A + new_H$B); new_C[!is.finite(new_C)] <- NA_real_
     out$new_subject <- list(H_A = new_H$A, H_B = new_H$B, H_AB = new_H$AB,
@@ -57,10 +110,7 @@
   H <- lapply(log_hazard, function(x) {
     if (is.null(dim(x)) || !all(dim(x) == c(draws, I, J)))
       stop("All salience posterior arrays must have draw by subject by bin dimensions.", call. = FALSE)
-    ans <- exp(x)
-    for (m in seq_len(draws)) for (i in seq_len(I))
-      ans[m, i, ] <- cumsum(ans[m, i, ] * widths)
-    ans
+    .sft_bayes_cumhaz(x, widths)
   })
   dn <- list(draw = seq_len(draws), Subject = subjects, bin = seq_along(times))
   for (nm in names(H)) dimnames(H[[nm]]) <- dn
@@ -92,9 +142,8 @@
     z <- hab / denom; z[!is.finite(z)] <- NA_real_
     Ccells[, , , cc] <- z
   }
-  Davg <- apply(Dcells, c(1L, 2L, 3L), mean, na.rm = TRUE)
-  logC <- log(Ccells)
-  logCavg <- apply(logC, c(1L, 2L, 3L), mean, na.rm = TRUE)
+  Davg <- .sft_bayes_mean_over(Dcells, 4L)
+  logCavg <- .sft_bayes_mean_over(log(Ccells), 4L)
   Cavg <- exp(logCavg)
   sic <- exp(-H$AB_LL) - exp(-H$AB_LH) - exp(-H$AB_HL) + exp(-H$AB_HH)
   dn <- list(draw = seq_len(draws), Subject = subjects, bin = seq_along(times))
@@ -117,9 +166,7 @@
     new_H <- lapply(new_subject, function(x) {
       if (is.null(dim(x)) || length(dim(x)) != 2L || dim(x)[1L] != draws ||
           dim(x)[2L] != J) stop("Unexpected new-subject salience posterior dimensions.", call. = FALSE)
-      ans <- exp(x)
-      for (m in seq_len(draws)) ans[m, ] <- cumsum(ans[m, ] * widths)
-      ans
+      .sft_bayes_cumhaz(x, widths)
     })
     new_D <- array(NA_real_, dim = c(draws, J, 4L),
                    dimnames = list(draw = seq_len(draws), bin = seq_along(times), cell = cells))
@@ -131,8 +178,8 @@
       new_D[, , cc] <- hab - ha - hb
       z <- hab / (ha + hb); z[!is.finite(z)] <- NA_real_; new_C[, , cc] <- z
     }
-    new_Davg <- apply(new_D, c(1L, 2L), mean, na.rm = TRUE)
-    new_logCavg <- apply(log(new_C), c(1L, 2L), mean, na.rm = TRUE)
+    new_Davg <- .sft_bayes_mean_over(new_D, 3L)
+    new_logCavg <- .sft_bayes_mean_over(log(new_C), 3L)
     new_Cavg <- exp(new_logCavg)
     new_sic <- exp(-new_H$AB_LL) - exp(-new_H$AB_LH) -
       exp(-new_H$AB_HL) + exp(-new_H$AB_HH)
@@ -220,7 +267,8 @@
         transformed$subject[[measure]][, i, , drop = FALSE][, 1L, ],
         times, "subject", measure, subjects[[i]], report, hdi, rope)
     }
-    population <- apply(transformed$subject[[measure]], c(1L, 3L), mean)
+    population <- .sft_bayes_mean_over(transformed$subject[[measure]], 2L,
+                                       na.rm = FALSE)
     parts[[length(parts) + 1L]] <- .sft_bayes_summary_matrix(
       population, times, "population", measure, NA_character_, report, hdi, rope)
     if (!is.null(transformed$new_subject)) {
@@ -265,9 +313,7 @@
 # Cumulative hazard -> survivor for one draws-by-bin log-hazard matrix.
 .sft_bayes_survivor_dxJ <- function(eta, widths) {
   eta <- matrix(as.numeric(eta), nrow = dim(eta)[1L])
-  S <- eta
-  for (m in seq_len(nrow(eta))) S[m, ] <- exp(-cumsum(exp(eta[m, ]) * widths))
-  S
+  exp(-.sft_bayes_cumhaz(eta, widths))
 }
 
 
@@ -299,6 +345,18 @@
 # means, mean(LL) - mean(LH) - mean(HL) + mean(HH): each cell mean is the area
 # under that cell's survivor on the same grid, so no separate mean computation is
 # needed and the MIC is provably the area under the SIC curve we report.
+#
+# Two approximations are worth stating plainly, because the identity above is
+# exact only in the continuum:
+#   * The pooled grid stops at the largest observed RT, so each cell mean is a
+#     *truncated* mean and the MIC is the truncated-mean contrast.  Mass beyond
+#     the last bin is ignored.
+#   * SIC(t_j) is evaluated at bin upper edges, so this is a right-endpoint
+#     Riemann sum; for a decreasing survivor it understates each cell's area.
+# Both biases act in the same direction on all four cells and so largely cancel
+# in the contrast, but they do not cancel exactly.  With a heavy right tail or a
+# coarse grid, prefer more bins over reading the absolute MIC too literally.
+#
 # Accepts a draws-by-bin curve (returns a vector) or a draws-by-subject-by-bin
 # array (returns a draws-by-subject matrix).
 .sft_bayes_integrate_sic <- function(sic, widths) {
@@ -530,11 +588,7 @@
 .sft_bayes_prior_predictive <- function(prepared, n_draws, seed) {
   raw <- .sft_bayes_prior_draws(prepared, n_draws, seed)
   widths <- prepared$grid$bins$width; times <- prepared$grid$bins$upper
-  H <- lapply(raw, function(x) {
-    ans <- x
-    for (m in seq_len(nrow(x))) ans[m, ] <- cumsum(exp(x[m, ]) * widths)
-    ans
-  })
+  H <- lapply(raw, .sft_bayes_cumhaz, widths = widths)
   D <- H$AB - H$A - H$B; C <- H$AB / (H$A + H$B)
   C[!is.finite(C)] <- NA_real_
   counts <- lapply(seq_along(.sft_bayes_series), function(s) {
@@ -635,11 +689,7 @@
 
 .sft_bayes_prior_predictive_salience <- function(prepared, n_draws, seed) {
   raw <- .sft_bayes_prior_draws_salience(prepared, n_draws, seed)
-  H <- lapply(raw, function(x) {
-    ans <- exp(x); for (m in seq_len(dim(ans)[1L])) for (i in seq_len(dim(ans)[2L]))
-      ans[m, i, ] <- cumsum(ans[m, i, ] * prepared$grid$bins$width)
-    ans
-  })
+  H <- lapply(raw, .sft_bayes_cumhaz, widths = prepared$grid$bins$width)
   cells <- .sft_bayes_salience_cells
   Dcells <- array(NA_real_, dim = c(dim(H[[1L]]), 4L))
   Ccells <- Dcells
@@ -652,8 +702,8 @@
   }
   sic <- exp(-H$AB_LL) - exp(-H$AB_LH) - exp(-H$AB_HL) + exp(-H$AB_HH)
   list(log_hazard = raw, H = H, D_cells = Dcells, C_cells = Ccells,
-       D = apply(Dcells, c(1L, 2L, 3L), mean, na.rm = TRUE),
-       C = exp(apply(log(Ccells), c(1L, 2L, 3L), mean, na.rm = TRUE)),
+       D = .sft_bayes_mean_over(Dcells, 4L),
+       C = exp(.sft_bayes_mean_over(log(Ccells), 4L)),
        SIC = sic, times = prepared$grid$bins$upper,
        counts = .sft_bayes_predictive_from_series(prepared, raw, seed + 7L)$summary)
 }

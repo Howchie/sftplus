@@ -18,7 +18,7 @@ sictestBayes(HH, HL, LH, LL, method = c("DP", "IG"), model = NULL, nbin = NULL, 
 \arguments{
   \item{inData}{Standard SFT data frame.}
   \item{domtest}{Dominance test method (e.g., \code{"ks"} for Kolmogorov-Smirnov).}
-  \item{plotSIC}{Logical; whether to automatically plot the resulting SIC.}
+  \item{plotSIC}{Accepted for backward compatibility and currently unused; no plot is drawn.}
   \item{dat}{A four-element list of SIC RT samples in HH, HL, LH, LL order for Dirichlet process testing.}
   \item{nbin}{Optional number of bins for Bayesian SIC/dominance calculations.}
   \item{nsamp, maxn}{Monte Carlo size bounds (initial samples and maximum iterations).}
@@ -36,8 +36,22 @@ sictestBayes(HH, HL, LH, LL, method = c("DP", "IG"), model = NULL, nbin = NULL, 
   (parallel, serial, coactive, etc.).
 }
 \details{
-  The SIC is fundamental in SFT for distinguishing cognitive architectures and stopping rules. 
-  The Bayesian Dirichlet Process tests provide a non-parametric approach to estimating the 
-  probabilities of different architectural predictions (e.g., all-positive for coactive, 
-  positive-then-negative for parallel exhaustive).
+  The SIC is fundamental in SFT for distinguishing cognitive architectures and stopping rules.
+  The Bayesian Dirichlet process test gives each of the four cells its own Dirichlet over a shared
+  set of pooled-RT bins and forms the contrast
+  \eqn{SIC = F_{LH} + F_{HL} - F_{HH} - F_{LL}} draw by draw, the same definition
+  \code{\link{sic.test}} uses. Each draw is classified into one of six shape classes and the Bayes
+  factor for a class is its posterior-to-prior odds.
+
+  The classes are \code{Z} (everywhere within \code{tolSIC} of zero: serial-OR),
+  \code{N} (all-negative: parallel exhaustive), \code{P} (all-positive: parallel self-terminating,
+  and coactive when its early negative dip falls below \code{tolSIC}), and the negative-then-positive
+  family \code{np}/\code{nP}/\code{Np}, distinguished by whether the signed areas balance to within
+  \code{tolMIC} (\code{np}: serial exhaustive) or favour the positive (\code{nP}) or negative
+  (\code{Np}) lobe.
+
+  \code{tolSIC} is applied to every sign test, so \code{N} and \code{P} tolerate excursions of up to
+  \code{tolSIC} on the other side rather than demanding literal sign purity; without that, no noisy
+  posterior draw could ever reach them. Raising \code{tolSIC} merges shallow lobes into the
+  neighbouring pure class, which is the main lever on how coactive curves are reported.
 }

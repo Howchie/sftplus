@@ -10,7 +10,7 @@ Author: Zachary Howard [aut, cre], Joseph Houpt [aut], Leslie Blaha [aut]
 Maintainer: Zachary Howard <zach.howard@uwa.edu.au>
 Depends: R (>= 3.5), methods, fda, SuppDists
 Imports: graphics, grDevices, splines, stats, utils
-Suggests: Rcpp, dplyr, ggplot2, rtdists, posterior, rstan, testthat (>= 3.0.0)
+Suggests: Rcpp, dplyr, ggplot2, rtdists, posterior, rstan, loo, testthat (>= 3.0.0)
 Description: Tools for analyzing Systems Factorial Technology data, including capacity coefficients, survivor interaction contrasts, statistical tests, assessment functions, Bayesian distribution-free SIC tests, and LBA/OU simulation utilities. Houpt, Blaha, McIntire, Havig, and Townsend (2013) <doi:10.3758/s13428-013-0377-3> provide a basic introduction to Systems Factorial Technology along with examples using the sft R package.
 License: GPL (>= 2)
 Encoding: UTF-8

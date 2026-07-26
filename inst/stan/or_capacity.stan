@@ -108,3 +108,28 @@ model {
     }
   }
 }
+
+generated quantities {
+  // Pointwise log-likelihood over every subject-by-bin cell of each series, in
+  // the order AB, A, B. Cells with no exposure contribute an exact zero and are
+  // dropped before WAIC/LOO in R, so they affect neither lppd nor p_waic.
+  vector[3 * I * J] log_lik;
+  {
+    int k = 0;
+    for (i in 1:I) for (j in 1:J) {
+      k += 1;
+      log_lik[k] = exposure_AB[i, j] > 0 ?
+        poisson_log_lpmf(d_AB[i, j] | log(exposure_AB[i, j]) + eta_AB[i, j]) : 0;
+    }
+    for (i in 1:I) for (j in 1:J) {
+      k += 1;
+      log_lik[k] = exposure_A[i, j] > 0 ?
+        poisson_log_lpmf(d_A[i, j] | log(exposure_A[i, j]) + eta_A[i, j]) : 0;
+    }
+    for (i in 1:I) for (j in 1:J) {
+      k += 1;
+      log_lik[k] = exposure_B[i, j] > 0 ?
+        poisson_log_lpmf(d_B[i, j] | log(exposure_B[i, j]) + eta_B[i, j]) : 0;
+    }
+  }
+}

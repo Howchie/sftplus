@@ -82,11 +82,14 @@ mic.test <- function(HH, HL, LH, LL, method = c("art", "anova")) {
   }
   prior_x <- rdir(nsamp, alpha); prior_y <- rdir(nsamp, alpha)
   post_x <- rdir(nsamp, cx + alpha); post_y <- rdir(nsamp, cy + alpha)
+  # dominates(a, b) is TRUE when the CDF of a is everywhere at or above that of
+  # b, i.e. F_a >= F_b, which is S_a <= S_b. The reported relations are stated in
+  # *survivor* terms, so "S_x > S_y" is dominates(y, x), not dominates(x, y).
   dominates <- function(a, b) rowSums(t(apply(a - b, 1, cumsum)) >= -tol) == ncol(a)
-  prior_greater <- mean(dominates(prior_x, prior_y))
-  post_greater <- mean(dominates(post_x, post_y))
-  prior_less <- mean(dominates(prior_y, prior_x))
-  post_less <- mean(dominates(post_y, post_x))
+  prior_greater <- mean(dominates(prior_y, prior_x))
+  post_greater <- mean(dominates(post_y, post_x))
+  prior_less <- mean(dominates(prior_x, prior_y))
+  post_less <- mean(dominates(post_x, post_y))
   list(BF_greater = post_greater / max(prior_greater, .Machine$double.eps),
        BF_less = post_less / max(prior_less, .Machine$double.eps),
        posterior_greater = post_greater, posterior_less = post_less,
@@ -106,8 +109,11 @@ siDominance <- function(HH, HL, LH, LL, method = c("ks", "dp"),
   )
   if (method == "ks") {
     rows <- lapply(pairs, function(p) {
-      greater <- suppressWarnings(stats::ks.test(p$x, p$y, alternative = "greater", exact = FALSE))
-      less <- suppressWarnings(stats::ks.test(p$x, p$y, alternative = "less", exact = FALSE))
+      # ks.test(alternative = "greater") tests whether the *CDF* of x lies above
+      # that of y, which is S_x < S_y. The rows below are labelled in survivor
+      # terms, so the alternatives are swapped relative to the label.
+      greater <- suppressWarnings(stats::ks.test(p$x, p$y, alternative = "less", exact = FALSE))
+      less <- suppressWarnings(stats::ks.test(p$x, p$y, alternative = "greater", exact = FALSE))
       list(test = c(p$greater, p$less), statistic = c(unname(greater$statistic), unname(less$statistic)),
            p = c(greater$p.value, less$p.value))
     })
@@ -133,16 +139,25 @@ siDominance <- function(HH, HL, LH, LL, method = c("ks", "dp"),
 }
 
 
+# Classify one SIC curve into the six SFT shape classes. tolSIC is applied
+# consistently to every sign test: an all-negative (N) or all-positive (P) curve
+# means no excursion beyond tolSIC on the *other* side, not literal sign purity.
+# Requiring strict purity makes N and P unreachable for any noisy curve -- a
+# single bin a hair over zero disqualifies it -- which silently drains their
+# posterior mass into the mixed classes.
 .sft_dp_checkmods <- function(x, dx, tolSIC = 5e-2, tolMIC = 1e-2) {
   ans <- c(Z = FALSE, N = FALSE, P = FALSE, nP = FALSE, Np = FALSE, np = FALSE)
-  nonzero <- abs(x) > tolSIC
-  if (!any(nonzero)) { ans["Z"] <- TRUE; return(ans) }
-  if (all(x <= 0) && any(x < 0)) { ans["N"] <- TRUE; return(ans) }
-  if (all(x >= 0) && any(x > 0)) { ans["P"] <- TRUE; return(ans) }
-  signed <- x[nonzero]
-  if (signed[[1L]] > 0 || sum(diff(sign(signed)) != 0) > 1L) return(ans)
-  neg_area <- -sum(x[x < -tolSIC] * dx[x < -tolSIC])
-  pos_area <- sum(x[x > tolSIC] * dx[x > tolSIC])
+  pos <- x > tolSIC
+  neg <- x < -tolSIC
+  if (!any(pos) && !any(neg)) { ans["Z"] <- TRUE; return(ans) }
+  if (!any(pos)) { ans["N"] <- TRUE; return(ans) }
+  if (!any(neg)) { ans["P"] <- TRUE; return(ans) }
+  # Both signs present: the only admissible mixed shapes cross once, negative
+  # first (serial-AND and coactive).
+  signed <- sign(x[pos | neg])
+  if (signed[[1L]] > 0 || sum(diff(signed) != 0) > 1L) return(ans)
+  neg_area <- -sum(x[neg] * dx[neg])
+  pos_area <- sum(x[pos] * dx[pos])
   if (abs(neg_area - pos_area) < tolMIC) ans["np"] <- TRUE
   else if (neg_area < pos_area) ans["nP"] <- TRUE
   else ans["Np"] <- TRUE
@@ -164,7 +179,10 @@ sicDPtest <- function(dat, nbin = NULL, nsamp = 10000L, maxn = 500000L,
   bins[length(bins)] <- max(bins[length(bins)], max(pooled) + .Machine$double.eps)
   nbin <- length(bins) - 1L
   dx <- diff(bins)
-  counts <- sapply(dat, function(x) hist(x, breaks = bins, plot = FALSE, include.lowest = TRUE)$counts)
+  counts <- matrix(vapply(dat, function(x)
+    as.numeric(hist(x, breaks = bins, plot = FALSE, include.lowest = TRUE)$counts),
+    numeric(nbin)), nrow = nbin, ncol = 4L,
+    dimnames = list(NULL, c("HH", "HL", "LH", "LL")))
   alpha <- rep(1 / nbin, nbin)
   if (is.null(tolMIC)) tolMIC <- max(mean(pooled) / 700, 1e-8)
   old_seed <- if (exists(".Random.seed", envir = .GlobalEnv, inherits = FALSE))
@@ -179,15 +197,27 @@ sicDPtest <- function(dat, nbin = NULL, nsamp = 10000L, maxn = 500000L,
     g <- matrix(stats::rgamma(n * length(a), shape = rep(a, each = n)), nrow = n)
     g / rowSums(g)
   }
+  # Each of the four cells carries its own Dirichlet over the shared bins, and a
+  # draw of the SIC is the contrast of their CDFs,
+  #   SIC = F_LH + F_HL - F_HH - F_LL,
+  # the same definition sic.test() and sic() use. `dat` is in HH, HL, LH, LL
+  # order, so the columns of `a` are weighted c(-1, +1, +1, -1).
+  sic_draws <- function(n, a) {
+    a <- matrix(a, nrow = nbin, ncol = 4L)
+    cdf <- lapply(seq_len(4L), function(cc) {
+      p <- rdir(n, a[, cc])
+      if (nbin == 1L) matrix(p, nrow = n, ncol = 1L) else t(apply(p, 1L, cumsum))
+    })
+    cdf[[3L]] + cdf[[2L]] - cdf[[1L]] - cdf[[4L]]
+  }
   classify <- function(n, a) {
-    p <- rdir(n, a)
-    cdfs <- t(apply(p, 1, cumsum))
-    apply(cdfs, 1, .sft_dp_checkmods, dx = dx, tolSIC = tolSIC, tolMIC = tolMIC)
+    curves <- sic_draws(n, a)
+    apply(curves, 1L, .sft_dp_checkmods, dx = dx, tolSIC = tolSIC, tolMIC = tolMIC)
   }
   prior <- matrix(0, nrow = 6, ncol = 1, dimnames = list(c("Z", "N", "P", "nP", "Np", "np"), "Prior"))
   post <- prior; N <- 0L
   repeat {
-    prior <- prior + rowSums(classify(nsamp, alpha))
+    prior <- prior + rowSums(classify(nsamp, matrix(alpha, nbin, 4L)))
     post <- post + rowSums(classify(nsamp, counts + alpha))
     N <- N + nsamp
     bf <- (post + 1) / (prior + 1)
@@ -196,7 +226,7 @@ sicDPtest <- function(dat, nbin = NULL, nsamp = 10000L, maxn = 500000L,
     # the stopping rule, matching the original implementation's fast default.
     p_hi <- stats::qbeta(c((1 - ci) / 2, 1 - (1 - ci) / 2), post[which.max(bf)] + 1,
                          N - post[which.max(bf)] + 1)
-    if (diff(p_hi) * N < 0.01 * N) break
+    if (diff(p_hi) < 0.01) break
   }
   bf <- drop((post + 1) / (prior + 1)); names(bf) <- rownames(prior)
   bfp <- bf / sum(bf)

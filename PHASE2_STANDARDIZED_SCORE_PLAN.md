@@ -1,3 +1,17 @@
+> **Status: superseded (2026-07-26).** Phase 2 shipped `"standardized"` as the
+> *default* and dropped `"score"`. That was wrong in one specific way: a fixed
+> `prior_sd` on `phi` implies a prior on `theta` of width
+> `prior_sd / sqrt(V_ref)`, which tightens at exactly the rate the likelihood
+> sharpens and therefore is never outweighed by data. On an eight-subject set
+> with every `Cz` near 8.5 it drove the population mean to 0.39 and `BF10` to
+> 1.36. The plan below verified invariance to *weight rescaling* but never to
+> *sample size*, which is the property that actually matters.
+>
+> Resolution: `"score"` (theta, the Peto one-step log hazard ratio) is restored
+> as the default effect scale; `"standardized"` is retained and its default
+> priors are the theta priors pushed through the `sqrt(V_ref)` map, so the two
+> are the same model reported in different units. See `.sft_default_priors()`.
+
 # Phase 2 — `score_method = "standardized"` (reference-information Cz scale)
 
 Follow-up to Phase 1 (Bayes factors + `"capacity"`→`"multiplicative"` rename). Phase 1

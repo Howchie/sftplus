@@ -93,7 +93,7 @@ semiparametricSFT.bayes <- function(inData = NULL, Condition = NULL, n_bins = 25
   prior_ppc <- if (prepared$split)
     .sft_bayes_prior_predictive_salience(prepared, prior_predictive_draws, ppc_seed) else
     .sft_bayes_prior_predictive(prepared, prior_predictive_draws, ppc_seed)
-  fit <- NULL; raw <- NULL; effects <- NULL
+  fit <- NULL; raw <- NULL; effects <- NULL; criteria <- NULL
   transformed <- .sft_bayes_empty_transformed()
   diagnostics <- list(available = FALSE, reason = "No posterior fit requested.")
   posterior_ppc <- NULL
@@ -162,6 +162,11 @@ semiparametricSFT.bayes <- function(inData = NULL, Condition = NULL, n_bins = 25
         "population_delta", "sigma_speed", "sigma_asymmetry", "sigma_capacity",
         "sigma_smooth_A", "sigma_smooth_B", "sigma_smooth_delta")
     raw <- rstan::extract(fit, pars = pars, permuted = TRUE, inc_warmup = FALSE)
+    # log_lik is pulled separately: it is large, is not part of the effect
+    # machinery, and is dropped again once the criteria are computed.
+    log_lik <- tryCatch(
+      rstan::extract(fit, pars = "log_lik", permuted = TRUE)$log_lik,
+      error = function(e) NULL)
     if (prepared$split) {
       effects <- .sft_bayes_effects_from_salience_posterior(raw, prepared$priors,
                                                              prepared$n_subjects, prepared$n_bins,
@@ -186,27 +191,34 @@ semiparametricSFT.bayes <- function(inData = NULL, Condition = NULL, n_bins = 25
     }
     diagnostics <- .sft_bayes_diagnostics(fit)
     diagnostics$available <- TRUE
+    if (!is.null(log_lik)) {
+      criteria <- list(waic = .sft_bayes_waic(log_lik),
+                       loo = .sft_bayes_loo(log_lik))
+      criteria$note <- paste(
+        "Cell-wise criteria: predictive accuracy for a new time bin of an",
+        "observed participant, not for a new participant. Compare only fits on",
+        "the same pooled grid and observation set.")
+    }
   }
   if (!is.null(transformed$D)) {
     if (prepared$split) {
       transformed$population <- list(
-        D = apply(transformed$D, c(1L, 3L), mean),
-        C = exp(apply(log(transformed$C), c(1L, 3L), mean, na.rm = TRUE)),
-        logC = apply(transformed$logC_average, c(1L, 3L), mean, na.rm = TRUE),
-        D_cells = apply(transformed$D_cells, c(1L, 3L, 4L), mean),
-        C_cells = apply(transformed$C_cells, c(1L, 3L, 4L), function(x)
-          exp(mean(log(x), na.rm = TRUE))),
-        SIC = apply(transformed$SIC, c(1L, 3L), mean)
+        D = .sft_bayes_mean_over(transformed$D, 2L, na.rm = FALSE),
+        C = exp(.sft_bayes_mean_over(log(transformed$C), 2L)),
+        logC = .sft_bayes_mean_over(transformed$logC_average, 2L),
+        D_cells = .sft_bayes_mean_over(transformed$D_cells, 2L, na.rm = FALSE),
+        C_cells = exp(.sft_bayes_mean_over(log(transformed$C_cells), 2L)),
+        SIC = .sft_bayes_mean_over(transformed$SIC, 2L, na.rm = FALSE)
       )
       summaries <- .sft_bayes_split_summaries(transformed, prepared$grid,
                                                prepared$subjects, hdi, rope)
     } else {
       transformed$population <- list(
-        D = apply(transformed$D, c(1L, 3L), mean),
-        C = apply(transformed$C, c(1L, 3L), mean),
-        H_A = apply(transformed$H_A, c(1L, 3L), mean),
-        H_B = apply(transformed$H_B, c(1L, 3L), mean),
-        H_AB = apply(transformed$H_AB, c(1L, 3L), mean)
+        D = .sft_bayes_mean_over(transformed$D, 2L, na.rm = FALSE),
+        C = .sft_bayes_mean_over(transformed$C, 2L, na.rm = FALSE),
+        H_A = .sft_bayes_mean_over(transformed$H_A, 2L, na.rm = FALSE),
+        H_B = .sft_bayes_mean_over(transformed$H_B, 2L, na.rm = FALSE),
+        H_AB = .sft_bayes_mean_over(transformed$H_AB, 2L, na.rm = FALSE)
       )
       summaries <- .sft_bayes_summaries(transformed, prepared$grid, prepared$subjects, hdi, rope)
     }
@@ -242,6 +254,7 @@ semiparametricSFT.bayes <- function(inData = NULL, Condition = NULL, n_bins = 25
     grid = prepared$grid, posterior = posterior, fit = if (isTRUE(return_fit)) fit else NULL,
     transformed = transformed, curves = summaries, tidy_curves = tidy,
     curve_data = tidy, sic = sic, mic = mic, diagnostics = diagnostics,
+    waic = criteria,
     predictive_checks = list(prior = prior_ppc, posterior = posterior_ppc),
     prior_metadata = list(priors = prepared$priors,
                           units = "log hazards are calibrated in seconds",

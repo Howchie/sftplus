@@ -176,3 +176,54 @@ model {
     }
   }
 }
+
+generated quantities {
+  // Pointwise log-likelihood over every subject-by-bin cell of the eight
+  // salience series, in the order A_L, A_H, B_L, B_H, AB_LL, AB_LH, AB_HL,
+  // AB_HH. Cells with no exposure contribute an exact zero and are dropped
+  // before WAIC/LOO in R.
+  vector[8 * I * J] log_lik;
+  {
+    int k = 0;
+    for (i in 1:I) for (j in 1:J) {
+      k += 1;
+      log_lik[k] = exposure_A_L[i, j] > 0 ?
+        poisson_log_lpmf(d_A_L[i, j] | log(exposure_A_L[i, j]) + eta_A_L[i, j]) : 0;
+    }
+    for (i in 1:I) for (j in 1:J) {
+      k += 1;
+      log_lik[k] = exposure_A_H[i, j] > 0 ?
+        poisson_log_lpmf(d_A_H[i, j] | log(exposure_A_H[i, j]) + eta_A_H[i, j]) : 0;
+    }
+    for (i in 1:I) for (j in 1:J) {
+      k += 1;
+      log_lik[k] = exposure_B_L[i, j] > 0 ?
+        poisson_log_lpmf(d_B_L[i, j] | log(exposure_B_L[i, j]) + eta_B_L[i, j]) : 0;
+    }
+    for (i in 1:I) for (j in 1:J) {
+      k += 1;
+      log_lik[k] = exposure_B_H[i, j] > 0 ?
+        poisson_log_lpmf(d_B_H[i, j] | log(exposure_B_H[i, j]) + eta_B_H[i, j]) : 0;
+    }
+    for (i in 1:I) for (j in 1:J) {
+      k += 1;
+      log_lik[k] = exposure_AB_LL[i, j] > 0 ?
+        poisson_log_lpmf(d_AB_LL[i, j] | log(exposure_AB_LL[i, j]) + eta_AB_LL[i, j]) : 0;
+    }
+    for (i in 1:I) for (j in 1:J) {
+      k += 1;
+      log_lik[k] = exposure_AB_LH[i, j] > 0 ?
+        poisson_log_lpmf(d_AB_LH[i, j] | log(exposure_AB_LH[i, j]) + eta_AB_LH[i, j]) : 0;
+    }
+    for (i in 1:I) for (j in 1:J) {
+      k += 1;
+      log_lik[k] = exposure_AB_HL[i, j] > 0 ?
+        poisson_log_lpmf(d_AB_HL[i, j] | log(exposure_AB_HL[i, j]) + eta_AB_HL[i, j]) : 0;
+    }
+    for (i in 1:I) for (j in 1:J) {
+      k += 1;
+      log_lik[k] = exposure_AB_HH[i, j] > 0 ?
+        poisson_log_lpmf(d_AB_HH[i, j] | log(exposure_AB_HH[i, j]) + eta_AB_HH[i, j]) : 0;
+    }
+  }
+}

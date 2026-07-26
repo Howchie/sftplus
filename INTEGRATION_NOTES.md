@@ -14,16 +14,54 @@ Integrated local functionality:
 Bayesian routes:
 
 - `sictestBayes(method = "DP")` implements the discretized Dirichlet-process
-  Monte Carlo route in `R/sft_core.R`, with explicit Monte Carlo
-  controls and repaired model-classification logic;
+  Monte Carlo route in `R/sic.R`, with explicit Monte Carlo controls. Each of the
+  four cells carries its own Dirichlet over the shared pooled-RT bins and the SIC
+  is formed as the contrast of their CDFs before classification. `tolSIC` is
+  applied to every sign test, so the all-negative and all-positive classes remain
+  reachable for noisy posterior draws;
 - `siDominance(method = "dp")` provides directional posterior probabilities
-  and posterior/prior event-probability ratios for each dominance relation;
+  and posterior/prior event-probability ratios for each dominance relation. Rows
+  are labelled in *survivor* terms: `S.hh > S.hl` means the HH survivor dominates,
+  which is the `less` alternative of `ks.test` on the CDFs;
 - `capacityGroup.bayes()` is a hierarchical Bayesian companion to the UCIP/Cz z
   test (the Bayesian analogue of `capacityGroup()`; the single-subject kernel is
   `ucip.bayes()`). It extracts the score numerator and information for each participant
   and partially pools the resulting score effects with a conjugate
-  Normal/inverse-Gamma hierarchy. It does not pool raw RTs, and it is not a
-  Bayes factor for the UCIP null.
+  Normal/inverse-Gamma hierarchy. It does not pool raw RTs.
+
+  The pooled effect defaults to `score_method = "score"`: theta = U / V, the Peto
+  one-step estimate of the log hazard ratio for the UCIP contrast, with precision
+  V. theta is stable in location as trials accumulate while V grows linearly with
+  them, so a fixed prior width is a genuine effect-size prior. `"standardized"`
+  reports the identical fit on the reference-Cz scale phi = theta * sqrt(V_ref);
+  `"multiplicative"` is the separate eta = log(A/B) estimand. A population
+  point-null Bayes factor (mu = 0, tau free) is reported via a Rao-Blackwellised
+  Savage-Dickey ratio; it is not a test of "every participant is UCIP".
+
+Later Bayesian additions:
+
+- `resilience.bayes()` / `resilienceGroup.bayes()` are the Bayesian companions to
+  `resilience.test()`, reusing the shared normal-normal engine. They default to
+  `score_method = "multiplicative"` (psi = log(H_AB / (H_A + H_B))). Note the
+  horizon: for complete data the Nelson-Aalen cumulative hazard at a sample's own
+  maximum equals the harmonic number sum(1/k) whatever the distribution, so all
+  three series coincide there and the contrast is -H_n for every dataset. The
+  Bayesian functions therefore evaluate at a pooled-RT quantile (`at_quantile`,
+  default the median); `resilience.test()` still uses the terminal time.
+- The hierarchical group models accept several conditions. `Condition = NULL` now
+  fits every condition present, giving one mu_c per condition over a shared tau
+  plus all pairwise `condition_contrasts`. Subjects are independent given
+  (mu, tau), so the contrasts are between-condition population comparisons, not
+  within-subject differences.
+- `prior_sensitivity()` refits over a grid of alternative-prior widths and reports
+  both null Bayes factors, making the Jeffreys-Lindley dependence explicit.
+- `spike_slab()` gives each participant an exact-zero spike or the population
+  slab, returning per-participant inclusion probabilities and Bayes factors. The
+  inclusion rate w is estimated, so participants shrink toward one another.
+- `sft_waic()` returns WAIC (and PSIS-LOO when the optional `loo` package is
+  installed) from the pointwise Poisson log-likelihood emitted by the Stan
+  models' generated quantities blocks. The criteria are cell-wise: predictive
+  accuracy for a new time bin of an observed participant, not a new participant.
 
 # Model 2: A hierarchical semiparametric hazard model
 

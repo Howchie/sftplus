@@ -30,6 +30,13 @@
 .sft_score_method <- function(method) {
   key <- tolower(gsub("[^A-Za-z]", "", as.character(method[[1L]])))
   switch(key,
+         # theta = U / V is the Peto one-step estimator of the log hazard ratio
+         # for the UCIP contrast: sample-size stable in location, with precision
+         # V that accumulates linearly in trials. It is the effect parameter the
+         # hierarchy pools; Cz_i = theta_i * sqrt(V_i) recovers ucip.test().
+         score = "score", theta = "score", loghazardratio = "score",
+         # phi = theta * sqrt(V_ref) is the same effect reported on the
+         # reference-Cz scale (a deterministic linear map given the data).
          standardized = "standardized", std = "standardized",
          referenceinformation = "standardized", phi = "standardized",
          multiplicative = "multiplicative", logratio = "multiplicative",
@@ -38,7 +45,7 @@
          # whole analysis (capacityGroup.bayes, capacity.or).
          capacity = "multiplicative", logcapacity = "multiplicative",
          eta = "multiplicative",
-         stop("score_method must be one of 'standardized' or 'multiplicative'."))
+         stop("score_method must be one of 'score', 'standardized', or 'multiplicative'."))
 }
 
 

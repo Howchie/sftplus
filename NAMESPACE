@@ -4,14 +4,15 @@ export(estimate.bounds, assessment, assessmentGroup, fPCAassessment, fPCAcapacit
        capacity.stst, capacityGroup, estimateNAH, estimateNAK, estimateUCIPor,
        estimateUCIPand, sic, sicGroup, sicGroupBF, sicDPtest, sictestBayes, ucip.test,
        ucip.id.test, siDominance, capacityGroup.bayes, ucip.bayes, micGroup.bayes,
-       resilience, resilience.test,
+       resilience, resilience.test, resilience.bayes, resilienceGroup.bayes,
        simulate_sft, simulate_sft_group, correctfun,
        assessment_ta_or, assessment_ta_and, assessment_donkin_discrimination,
        build_ct_df, build_sic_df,
        build_at_df, build_cdf_df, get_time_range, smooth_one_cdf,
        find_equal_vc_yes, semiparametricSFT.bayes, mic.bayes, sic.bayes,
-       sft_data_to_rt)
+       sft_data_to_rt, prior_sensitivity, spike_slab, sft_waic)
 S3method(print, sft_bayes)
+S3method(print, sft_prior_sensitivity)
 
 # Import all packages listed as Imports or Depends
 import(methods,fda,SuppDists)

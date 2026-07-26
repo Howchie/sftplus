@@ -208,21 +208,102 @@ test_that("standardized score reports both Bayes factors", {
   expect_equal(std$score$Cz,
                unname(vapply(rt, function(x) unname(ucip.test(x)$statistic), numeric(1))),
                tolerance = 1e-12)
-  expect_identical(std$model$interpretation,
-                   "phi is the reference-information standardized score effect (Cz for a participant with median information)")
+  expect_match(std$model$interpretation, "reference-Cz scale")
 })
 
-test_that("the redundant raw-score scale is removed", {
-  # "score"/"theta" were dropped: the standardized phi scale is the same model
-  # in interpretable units, so only "standardized" and "multiplicative" remain.
-  expect_error(sftplus:::.sft_score_method("score"),
-               "'standardized' or 'multiplicative'")
-  expect_error(sftplus:::.sft_score_method("theta"),
-               "'standardized' or 'multiplicative'")
-  rt <- lapply(1:2, function(i) list(rexp(20, 2), rexp(20, 1.8), rexp(20, 1.6)))
-  expect_error(capacityGroup.bayes(rt, score_method = "score", ndraws = 120,
-                                   burnin = 30, chains = 2, seed = 8),
-               "'standardized' or 'multiplicative'")
+test_that("the theta log-hazard-ratio scale is the default effect scale", {
+  # theta = U / V is the Peto one-step log hazard ratio: it is the effect the Cz
+  # statistic tests, and unlike phi it is stable as trials accumulate.
+  expect_identical(sftplus:::.sft_score_method("score"), "score")
+  expect_identical(sftplus:::.sft_score_method("theta"), "score")
+  expect_identical(sftplus:::.sft_score_method("loghazardratio"), "score")
+  expect_error(sftplus:::.sft_score_method("nonsense"),
+               "'score', 'standardized', or 'multiplicative'")
+  expect_identical(eval(formals(capacityGroup.bayes)$score_method)[[1L]], "score")
+  expect_identical(eval(formals(ucip.bayes)$score_method)[[1L]], "score")
+})
+
+test_that("theta is stable in trial count while phi grows with it", {
+  # The reason theta is the effect scale: doubling the trials leaves theta put
+  # and doubles its precision, whereas phi is a z-statistic that grows as sqrt(n)
+  # with its precision pinned at 1. A fixed prior width is only an effect-size
+  # prior on the former.
+  mk <- function(n) list(rexp(n, 5), rexp(n, 1.6), rexp(n, 1.6))
+  scale_at <- function(n, method) {
+    set.seed(99)
+    rt <- lapply(1:6, function(i) mk(n))
+    names(rt) <- paste0("P", 1:6)
+    sftplus:::.sft_ucip_score_data(sftplus:::.sft_subject_ucip_input(rt, NULL),
+                                   "OR", method)
+  }
+  small <- scale_at(60, "score"); big <- scale_at(480, "score")
+  expect_equal(mean(big$effect_hat), mean(small$effect_hat), tolerance = 0.15)
+  expect_gt(mean(big$precision) / mean(small$precision), 5)
+
+  small_phi <- scale_at(60, "standardized"); big_phi <- scale_at(480, "standardized")
+  expect_gt(mean(big_phi$effect_hat) / mean(small_phi$effect_hat), 2)
+  expect_equal(mean(small_phi$precision), 1, tolerance = 0.05)
+  expect_equal(mean(big_phi$precision), 1, tolerance = 0.05)
+})
+
+test_that("score and standardized are the same model in different units", {
+  # phi = theta * sqrt(V_ref) is a deterministic linear map given the data, and
+  # the default priors are mapped with it, so the two fits must agree exactly on
+  # any scale-free quantity and by sqrt(V_ref) on any located one.
+  set.seed(4242)
+  rt <- lapply(1:6, function(i) list(rexp(120, 5), rexp(120, 1.6), rexp(120, 1.6)))
+  names(rt) <- paste0("P", 1:6)
+  a <- capacityGroup.bayes(rt, score_method = "score",
+                           ndraws = 3000, burnin = 500, chains = 2, seed = 3)
+  b <- capacityGroup.bayes(rt, score_method = "standardized",
+                           ndraws = 3000, burnin = 500, chains = 2, seed = 3)
+  expect_equal(a$bayes_factor$point_null$BF10, b$bayes_factor$point_null$BF10)
+  expect_equal(mean(b$draws$mu) / sqrt(b$V_ref), mean(a$draws$mu))
+  expect_equal(b$prior$mu$sd / sqrt(b$V_ref), a$prior$mu$sd)
+  expect_equal(b$score$Cz, a$score$Cz)
+})
+
+test_that("the default prior is swamped by an unambiguous group effect", {
+  # Regression guard for the mis-scaled default that used a fixed width on the
+  # phi scale: it implied a prior on theta of width prior_sd / sqrt(V_ref), which
+  # tightened as fast as the likelihood and so never washed out. Every subject
+  # here has Cz > 5, so the population posterior must be far from zero.
+  set.seed(777)
+  # UCIP-OR predicts h_AB = h_A + h_B = 3.2; an AB rate of 6 is well above it,
+  # so every participant is strongly super-capacity.
+  rt <- lapply(1:8, function(i) list(rexp(150, 6), rexp(150, 1.6), rexp(150, 1.6)))
+  names(rt) <- paste0("P", 1:8)
+  g <- capacityGroup.bayes(rt, ndraws = 4000, burnin = 500, chains = 2, seed = 5)
+  expect_true(all(g$score$Cz > 4))
+  expect_gt(g$bayes_factor$point_null$BF10, 100)
+  expect_gt(g$population_summary$lower[1], 0)
+  # The posterior mean must track the participant estimates, not the prior.
+  expect_equal(unname(g$statistic), mean(g$score$theta_hat), tolerance = 0.2)
+})
+
+test_that("the hierarchy recovers a known population effect", {
+  # Simulation-based check on the shared normal-normal engine: draw subject
+  # effects from a known mu/tau, hand the engine their noisy estimates, and
+  # require the posterior to cover the truth. Structural tests alone cannot
+  # catch a mis-scaled prior; this can.
+  set.seed(11)
+  mu_true <- 0.6; tau_true <- 0.25; n <- 25
+  covered <- vapply(seq_len(40L), function(rep) {
+    theta <- stats::rnorm(n, mu_true, tau_true)
+    precision <- stats::runif(n, 20, 60)
+    hat <- stats::rnorm(n, theta, 1 / sqrt(precision))
+    fit <- sftplus:::.sft_normal_hierarchy_fit(
+      hat, precision, paste0("s", seq_len(n)), "theta", "InvGamma",
+      ndraws = 800L, burnin = 200L, thin = 1L, chains = 2L,
+      prior_mean = 0, prior_sd = 0.5, prior_shape = 2, prior_rate = 0.25^2,
+      prior_tau_sd = 0.5, seed = rep, adapt_delta = .95, max_treedepth = 12L,
+      stan_control = list(), hdi = .9, rope = NULL)
+    pop <- fit$population[fit$population$parameter == "mu", ]
+    mu_true >= pop$lower && mu_true <= pop$upper
+  }, logical(1))
+  # 90% intervals over 40 replicates: allow Monte Carlo slack, but a badly
+  # scaled prior collapses this far below nominal.
+  expect_gt(mean(covered), 0.7)
 })
 
 test_that("single-subject UCIP Bayesian companion uses the analytic posterior", {
@@ -231,18 +312,28 @@ test_that("single-subject UCIP Bayesian companion uses the analytic posterior", 
   ans <- capacityGroup.bayes(rt, ndraws = 400, chains = 2, seed = 7,
                          prior_mean = .2, prior_sd = .8, rope = .05)
   score <- ans$score
-  # The default standardized scale gives a single subject phi = Cz and an
-  # analytic observation precision of one.
-  post_var <- 1 / (1 + 1 / .8^2)
-  post_mean <- post_var * (score$phi_hat + .2 / .8^2)
+  # The default theta scale carries the participant's own information V as the
+  # observation precision.
+  post_var <- 1 / (score$V + 1 / .8^2)
+  post_mean <- post_var * (score$V * score$theta_hat + .2 / .8^2)
   expect_identical(ans$method_code, "Analytic")
   expect_null(ans$population_summary)
   expect_false(any(c("mu", "tau") %in% names(ans$draws)))
-  expect_equal(ans$summary$parameter, "phi[1]")
+  expect_equal(ans$summary$parameter, "theta[1]")
   expect_equal(ans$summary$mean, post_mean, tolerance = .08)
   expect_equal(nrow(ans$draws), 800)
   expect_equal(ans$score$Cz, ucip.test(rt)$statistic[[1]])
   expect_equal(ans$diagnostics$rhat, 1)
+
+  # On the standardized scale the same subject has phi = Cz and precision 1.
+  std <- capacityGroup.bayes(rt, ndraws = 400, chains = 2, seed = 7,
+                             prior_mean = .2, prior_sd = .8, rope = .05,
+                             score_method = "standardized")
+  expect_equal(std$summary$parameter, "phi[1]")
+  expect_equal(std$score$phi_hat, std$score$Cz)
+  std_var <- 1 / (1 + 1 / .8^2)
+  expect_equal(std$summary$mean, std_var * (std$score$phi_hat + .2 / .8^2),
+               tolerance = .08)
 })
 
 test_that("hierarchical method aliases retain the Gibbs implementation", {
@@ -452,4 +543,100 @@ test_that("bootstrap var_method reports both variances and is close to analytic"
   expect_true("se_analytic" %in% names(u$score))
   expect_error(ucip.bayes(rt, var_method = "bootstrap", n_boot = 10),
                "n_boot")
+})
+
+test_that("sicDPtest forms the SIC contrast and separates architectures", {
+  # Regression guard: the sampler used to cumsum a single Dirichlet draw, which
+  # is a CDF and therefore always classified "P", making every Bayes factor
+  # exactly 1 regardless of the data.
+  set.seed(4)
+  n <- 500
+  gen <- list(
+    P = function(r1, r2) pmin(rexp(n, r1), rexp(n, r2)),   # parallel-OR
+    N = function(r1, r2) pmax(rexp(n, r1), rexp(n, r2)),   # parallel-AND
+    np = function(r1, r2) rexp(n, r1) + rexp(n, r2)        # serial-AND
+  )
+  for (expected in names(gen)) {
+    f <- gen[[expected]]
+    res <- sicDPtest(list(f(3, 3), f(3, 1), f(1, 3), f(1, 1)),
+                     nbin = 10, nsamp = 4000L, maxn = 8000L, seed = 5)
+    expect_identical(names(which.max(res$BF)), expected)
+    expect_false(isTRUE(all.equal(unname(res$BF), rep(1, 6))))
+  }
+})
+
+test_that("checkmods applies tolSIC to every sign test", {
+  dx <- rep(1, 5)
+  # A curve that is negative apart from one bin a hair above zero is still "N";
+  # strict sign purity used to make N and P unreachable for any noisy curve.
+  expect_true(sftplus:::.sft_dp_checkmods(c(-.3, -.4, -.2, 1e-4, -.1), dx)[["N"]])
+  expect_true(sftplus:::.sft_dp_checkmods(c(.3, .4, .2, -1e-4, .1), dx)[["P"]])
+  expect_true(sftplus:::.sft_dp_checkmods(rep(1e-4, 5), dx)[["Z"]])
+  expect_true(sftplus:::.sft_dp_checkmods(c(-.3, -.2, .2, .3, .1), dx,
+                                          tolMIC = 1)[["np"]])
+})
+
+test_that("siDominance states relations in survivor terms", {
+  # HH far faster than HL means F_HH > F_HL, i.e. S_HH < S_HL. Both routes used
+  # to report that as evidence for "S.hh > S.hl".
+  set.seed(1)
+  HH <- rlnorm(400, log(.4), .2); HL <- rlnorm(400, log(.8), .2)
+  LH <- rlnorm(400, log(.8), .2); LL <- rlnorm(400, log(.9), .2)
+  ks <- siDominance(HH, HL, LH, LL, method = "ks")
+  expect_gt(ks$p.value[ks$Test == "S.hh > S.hl"], .5)
+  expect_lt(ks$p.value[ks$Test == "S.hh < S.hl"], .01)
+  dp <- siDominance(HH, HL, LH, LL, method = "dp", nsamp = 2000, seed = 3)
+  expect_lt(dp$BF[dp$Test == "S.hh > S.hl"], 1)
+  expect_gt(dp$BF[dp$Test == "S.hh < S.hl"], 3)
+})
+
+test_that("the interval-null Bayes factor stays finite at the MC boundary", {
+  bf_none <- sftplus:::.sft_interval_null_bf(matrix(rnorm(2000, 5, .1)), .01, 0, .5)
+  expect_true(is.finite(bf_none$BF10))
+  expect_true(bf_none$mc_resolution_limited)
+  expect_equal(bf_none$posterior_null_probability, 0)
+  bf_all <- sftplus:::.sft_interval_null_bf(matrix(rnorm(2000, 0, .001)), .5, 0, .5)
+  expect_true(is.finite(bf_all$BF01))
+  expect_true(bf_all$mc_resolution_limited)
+  # An unsaturated region is not flagged and is not smoothed away.
+  bf_ok <- sftplus:::.sft_interval_null_bf(matrix(rnorm(4000, 0, 1)), .5, 0, .5)
+  expect_false(bf_ok$mc_resolution_limited)
+  expect_true(is.finite(bf_ok$BF01) && bf_ok$BF01 > 0)
+})
+
+test_that("tau carries no sign or ROPE probabilities", {
+  set.seed(31)
+  rt <- lapply(1:4, function(i) list(rexp(60, 3), rexp(60, 1.6), rexp(60, 1.6)))
+  names(rt) <- paste0("P", 1:4)
+  g <- capacityGroup.bayes(rt, ndraws = 600, burnin = 100, chains = 2,
+                           seed = 2, rope = .1)
+  tau <- g$summary[g$summary$parameter == "tau", ]
+  expect_true(is.na(tau$posterior_positive))
+  expect_true(is.na(tau$posterior_negative))
+  expect_true(is.na(tau$posterior_rope))
+  mu <- g$summary[g$summary$parameter == "mu", ]
+  expect_false(is.na(mu$posterior_positive))
+  expect_false(is.na(mu$posterior_rope))
+})
+
+test_that("vectorised posterior reductions match their apply equivalents", {
+  set.seed(7)
+  a <- array(stats::rnorm(6 * 5 * 4 * 3), c(6, 5, 4, 3))
+  a[sample(length(a), 40)] <- NA
+  for (m in 1:4) {
+    keep <- setdiff(1:4, m)
+    expect_equal(sftplus:::.sft_bayes_mean_over(a, m),
+                 apply(a, keep, mean, na.rm = TRUE))
+    expect_equal(sftplus:::.sft_bayes_mean_over(a, m, na.rm = FALSE),
+                 apply(a, keep, mean))
+  }
+  eta <- array(stats::rnorm(50 * 3 * 8), c(50, 3, 8))
+  w <- stats::runif(8, .05, .2)
+  ref <- eta
+  for (i in seq_len(50)) for (j in seq_len(3)) ref[i, j, ] <- cumsum(exp(eta[i, j, ]) * w)
+  expect_equal(sftplus:::.sft_bayes_cumhaz(eta, w), ref)
+  flat <- matrix(stats::rnorm(40 * 8), 40, 8)
+  ref2 <- flat
+  for (i in seq_len(40)) ref2[i, ] <- exp(-cumsum(exp(flat[i, ]) * w))
+  expect_equal(sftplus:::.sft_bayes_survivor_dxJ(flat, w), ref2)
 })

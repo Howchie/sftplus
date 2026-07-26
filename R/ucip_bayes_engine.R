@@ -20,15 +20,33 @@
 
 
 # Generic normal-normal hierarchical Gibbs sampler. It is agnostic to the
-# effect being pooled (UCIP score/Cz, log-capacity, or the mean interaction
-# contrast): every caller supplies a per-subject effect estimate and its
+# effect being pooled (UCIP score/Cz, log-capacity, resilience, or the mean
+# interaction contrast): every caller supplies a per-unit effect estimate and its
 # sampling precision, so the updates below are unchanged across models.
+#
+# `group` optionally assigns each unit to a condition, giving one population mean
+# mu_c per condition over a shared between-subject scale tau:
+#
+#   theta_hat_i ~ Normal(theta_i, 1 / precision_i)
+#   theta_i     ~ Normal(mu_{group_i}, tau)
+#   mu_c        ~ Normal(prior_mean, prior_sd)
+#
+# Every full conditional stays conjugate; with one condition this reduces
+# exactly to the single-mean sampler. Note that the model treats units as
+# independent given mu and tau, so a participant contributing to several
+# conditions is not linked across them -- the contrasts below are
+# between-condition population comparisons, not within-subject differences.
 .sft_hierarchical_normal_chain <- function(theta_hat, precision, ndraws, burnin,
                                            thin, prior_mean, prior_sd,
-                                           tau2_prior_shape, tau2_prior_rate) {
+                                           tau2_prior_shape, tau2_prior_rate,
+                                           group = NULL) {
   n <- length(theta_hat)
+  if (is.null(group)) group <- rep(1L, n)
+  group <- as.integer(group)
+  n_group <- max(group)
+  counts <- tabulate(group, n_group)
   niter <- burnin + ndraws * thin
-  mu_draws <- numeric(ndraws)
+  mu_draws <- matrix(NA_real_, nrow = ndraws, ncol = n_group)
   tau2_draws <- numeric(ndraws)
   theta_draws <- matrix(NA_real_, nrow = ndraws, ncol = n)
   # Over-dispersed per-chain starting values so split-R-hat reflects genuine
@@ -36,32 +54,32 @@
   # global RNG, so tau2 (drawn from its prior) and the jittered mu differ across
   # chains; theta is resampled at the top of the loop, so its start is immaterial.
   tau2 <- 1 / stats::rgamma(1L, shape = tau2_prior_shape, rate = tau2_prior_rate)
-  mu <- stats::rnorm(1L, stats::weighted.mean(theta_hat, precision), sqrt(tau2))
-  theta <- theta_hat
+  mu <- stats::rnorm(n_group, stats::weighted.mean(theta_hat, precision), sqrt(tau2))
   save_i <- 0L
 
   for (iter in seq_len(niter)) {
     theta_var <- 1 / (precision + 1 / tau2)
-    theta_mean <- theta_var * (precision * theta_hat + mu / tau2)
+    theta_mean <- theta_var * (precision * theta_hat + mu[group] / tau2)
     theta <- stats::rnorm(n, theta_mean, sqrt(theta_var))
 
-    mu_var <- 1 / (n / tau2 + 1 / prior_sd^2)
-    mu_mean <- mu_var * (sum(theta) / tau2 + prior_mean / prior_sd^2)
-    mu <- stats::rnorm(1L, mu_mean, sqrt(mu_var))
+    group_sum <- as.numeric(rowsum(theta, group, reorder = TRUE))
+    mu_var <- 1 / (counts / tau2 + 1 / prior_sd^2)
+    mu_mean <- mu_var * (group_sum / tau2 + prior_mean / prior_sd^2)
+    mu <- stats::rnorm(n_group, mu_mean, sqrt(mu_var))
 
     # tau^2 has an inverse-Gamma full conditional. Sampling its reciprocal
     # as Gamma keeps the update stable and avoids a parameter at zero.
     tau2 <- 1 / stats::rgamma(
       1L, shape = tau2_prior_shape + n / 2,
-      rate = tau2_prior_rate + sum((theta - mu)^2) / 2
+      rate = tau2_prior_rate + sum((theta - mu[group])^2) / 2
     )
 
     if (iter > burnin && (iter - burnin) %% thin == 0L) {
       save_i <- save_i + 1L
-      mu_draws[save_i] <- mu
+      mu_draws[save_i, ] <- mu
       tau2_draws[save_i] <- tau2
       theta_draws[save_i, ] <- theta
-    
+
       if (save_i == ndraws) break
     }
   }
@@ -82,6 +100,26 @@
          martingale = "analytic", delta = "analytic", closedform = "analytic",
          bootstrap = "bootstrap", boot = "bootstrap", resample = "bootstrap",
          stop("var_method must be one of 'analytic' or 'bootstrap'."))
+}
+
+
+# Stan data name for the per-subject precision, kept distinct per effect scale so
+# the generated model code and its cache key stay unambiguous.
+.sft_precision_name <- function(score_method) {
+  switch(score_method, multiplicative = "P", standardized = "W", "V")
+}
+
+
+# One-line reading of the effect each score_method pools.
+.sft_effect_interpretation <- function(score_method) {
+  switch(
+    score_method,
+    multiplicative = "exp(eta) is the participant weighted capacity ratio",
+    standardized = paste("phi is the score effect on the reference-Cz scale",
+                         "(Cz for a participant with median information);",
+                         "phi = theta * sqrt(V_ref)"),
+    paste("theta is the UCIP score effect on the log-hazard-ratio scale",
+          "(the Peto one-step estimate); Cz_i = theta_i * sqrt(V_i)"))
 }
 
 
@@ -153,57 +191,68 @@
                                       method, ndraws, burnin, thin, chains,
                                       prior_mean, prior_sd, prior_shape, prior_rate,
                                       prior_tau_sd, seed, adapt_delta, max_treedepth,
-                                      stan_control, hdi, rope) {
+                                      stan_control, hdi, rope,
+                                      group = NULL, group_levels = NULL) {
   prior_predictive <- .sft_prior_predictive(
     effect_hat, precision, ndraws, method, prior_shape, prior_rate,
     prior_mean, prior_sd, prior_tau_sd, effect_name = effect_name
   )
   n <- length(effect_hat)
+  if (is.null(group)) group <- rep(1L, n)
+  group <- as.integer(group)
+  n_group <- max(group)
+  if (is.null(group_levels)) group_levels <- as.character(seq_len(n_group))
+  mu_names <- if (n_group == 1L) "mu" else paste0("mu[", group_levels, "]")
   stan_fit <- NULL
   sampler_diagnostics <- NULL
   if (method == "InvGamma") {
     chain_draws <- lapply(seq_len(chains), function(chain) {
       .sft_hierarchical_normal_chain(effect_hat, precision, ndraws, burnin, thin,
-                                     prior_mean, prior_sd, prior_shape, prior_rate)
+                                     prior_mean, prior_sd, prior_shape, prior_rate,
+                                     group = group)
     })
-    chain_array <- array(NA_real_, dim = c(ndraws, chains, 2L + n))
+    chain_array <- array(NA_real_, dim = c(ndraws, chains, n_group + 1L + n))
     for (j in seq_len(chains)) {
-      chain_array[, j, 1L] <- chain_draws[[j]]$mu
-      chain_array[, j, 2L] <- chain_draws[[j]]$tau
-      chain_array[, j, seq_len(n) + 2L] <- chain_draws[[j]]$theta
+      chain_array[, j, seq_len(n_group)] <- chain_draws[[j]]$mu
+      chain_array[, j, n_group + 1L] <- chain_draws[[j]]$tau
+      chain_array[, j, seq_len(n) + n_group + 1L] <- chain_draws[[j]]$theta
     }
   } else {
     stan <- .sft_run_stan_hierarchy(
       method, effect_hat, precision, ndraws, burnin, thin, chains,
       prior_mean, prior_sd, prior_tau_sd, seed, adapt_delta,
-      max_treedepth, stan_control, effect_name = effect_name
+      max_treedepth, stan_control, effect_name = effect_name, group = group
     )
     chain_array <- stan$chain_array
     stan_fit <- stan$fit
     sampler_diagnostics <- stan$sampler_diagnostics
   }
-  parameter_names <- c("mu", "tau", paste0(effect_name, "[", subject, "]"))
+  parameter_names <- c(mu_names, "tau", paste0(effect_name, "[", subject, "]"))
   dimnames(chain_array) <- list(NULL, paste0("chain", seq_len(chains)), parameter_names)
-  mu_chain <- chain_array[, , 1L, drop = TRUE]
-  tau_chain <- chain_array[, , 2L, drop = TRUE]
-  effect_array <- chain_array[, , seq_len(n) + 2L, drop = FALSE]
-  mu_draws <- as.vector(mu_chain)
-  tau_draws <- as.vector(tau_chain)
-  effect_draws <- matrix(effect_array, nrow = ndraws * chains, ncol = n)
-  parameter_draws <- cbind(mu = mu_draws, tau = tau_draws, effect_draws)
+  total <- ndraws * chains
+  mu_matrix <- matrix(chain_array[, , seq_len(n_group), drop = FALSE],
+                      nrow = total, ncol = n_group,
+                      dimnames = list(NULL, group_levels))
+  tau_draws <- as.vector(chain_array[, , n_group + 1L, drop = TRUE])
+  effect_draws <- matrix(chain_array[, , seq_len(n) + n_group + 1L, drop = FALSE],
+                         nrow = total, ncol = n)
+  mu_draws <- if (n_group == 1L) mu_matrix[, 1L] else mu_matrix
+  parameter_draws <- cbind(mu_matrix, tau = tau_draws, effect_draws)
   summary <- .sft_parameter_summary(parameter_draws, parameter_names, hdi, rope)
-  population <- summary[summary$parameter %in% c("mu", "tau"), , drop = FALSE]
+  population <- summary[summary$parameter %in% c(mu_names, "tau"), , drop = FALSE]
   subject_summary <- summary[grepl(paste0("^", effect_name, "\\["), summary$parameter), , drop = FALSE]
   rownames(population) <- NULL
   rownames(subject_summary) <- subject
   posterior_predictive <- .sft_posterior_predictive(effect_draws, effect_hat, precision)
   shrinkage_draws <- .sft_shrinkage_draws(tau_draws, precision)
   shrinkage_summary <- .sft_shrinkage_summary(shrinkage_draws, subject, hdi)
-  draws <- data.frame(mu = mu_draws, tau = tau_draws, effect_draws,
+  draws <- data.frame(mu_matrix, tau = tau_draws, effect_draws,
                       check.names = FALSE)
-  names(draws)[-(1:2)] <- paste0(effect_name, "[", subject, "]")
+  names(draws) <- c(mu_names, "tau", paste0(effect_name, "[", subject, "]"))
   diagnostics <- .sft_mcmc_diagnostics(chain_array, parameter_names)
-  list(mu_draws = mu_draws, tau_draws = tau_draws, effect_draws = effect_draws,
+  list(mu_draws = mu_draws, mu_matrix = mu_matrix, tau_draws = tau_draws,
+       effect_draws = effect_draws, group = group, group_levels = group_levels,
+       mu_names = mu_names,
        parameter_names = parameter_names, summary = summary, population = population,
        subject_summary = subject_summary, posterior_predictive = posterior_predictive,
        shrinkage_draws = shrinkage_draws, shrinkage_summary = shrinkage_summary,
@@ -234,11 +283,15 @@
 # sensitivity): a diffuse prior inflates the evidence for the null.
 .sft_point_null_bf <- function(prior_mean, prior_sd, null = 0,
                                post_mean = NULL, post_var = NULL,
-                               effect_draws = NULL, tau_draws = NULL) {
+                               effect_draws = NULL, tau_draws = NULL,
+                               group = NULL) {
   prior_density <- stats::dnorm(null, prior_mean, prior_sd)
   posterior_density <- if (!is.null(post_mean)) {
     stats::dnorm(null, post_mean, sqrt(post_var))
   } else {
+    # Restrict to the units in this condition: the Gibbs full conditional for
+    # mu_c involves only its own group's effects and count.
+    if (!is.null(group)) effect_draws <- effect_draws[, group, drop = FALSE]
     n <- ncol(effect_draws)
     tau2 <- tau_draws^2
     v_mu <- 1 / (n / tau2 + 1 / prior_sd^2)
@@ -262,17 +315,38 @@
 # the raw ROPE probability it credits the prior-to-posterior odds shift. The
 # marginal prior on mu (and on a single analytic effect) is Normal(prior_mean,
 # prior_sd), so the prior mass in the region is available in closed form.
+#
+# The posterior mass is a Monte Carlo proportion, so it saturates at 0 and 1
+# once the region falls outside the draws. Reporting the raw proportion there
+# would hand back BF01 = 0 or Inf as though it were an estimate. Instead the
+# odds use a Jeffreys-smoothed proportion, (k + 1/2) / (n + 1), which keeps the
+# Bayes factor finite and turns a saturated cell into an explicit resolution
+# bound: the reported value is then the strongest evidence the draw count can
+# support, flagged by mc_resolution_limited.
 .sft_interval_null_bf <- function(effect_draws, delta, prior_mean, prior_sd) {
-  posterior_null <- mean(abs(effect_draws) < delta)
+  x <- as.numeric(effect_draws)
+  x <- x[is.finite(x)]
+  n <- length(x)
+  k <- sum(abs(x) < delta)
+  posterior_null <- if (n) k / n else NA_real_
+  smoothed <- (k + 0.5) / (n + 1)
+  saturated <- n > 0L && (k == 0L || k == n)
   prior_null <- stats::pnorm(delta, prior_mean, prior_sd) -
     stats::pnorm(-delta, prior_mean, prior_sd)
-  posterior_odds <- posterior_null / (1 - posterior_null)
-  prior_odds <- prior_null / (1 - prior_null)
-  bf01 <- posterior_odds / prior_odds
+  bf01 <- (smoothed / (1 - smoothed)) / (prior_null / (1 - prior_null))
+  if (isTRUE(saturated)) {
+    warning("The interval null captured ", if (k == 0L) "none" else "all",
+            " of the ", n, " posterior draws, so the Bayes factor is limited by ",
+            "Monte Carlo resolution; treat it as a bound and raise ndraws to ",
+            "sharpen it.", call. = FALSE)
+  }
   list(delta = delta,
        posterior_null_probability = posterior_null,
        prior_null_probability = prior_null,
-       BF01 = bf01, BF10 = 1 / bf01)
+       BF01 = bf01, BF10 = 1 / bf01,
+       n_draws = n,
+       mc_resolution_limited = saturated,
+       estimator = "interval null, Jeffreys-smoothed posterior mass")
 }
 
 
@@ -330,26 +404,48 @@
 
 # ---- Scale-aware default priors for the UCIP capacity models ---------------
 #
-# The priors are anchored on the standardized reference-information phi scale,
-# whose unit is interpretable (a Cz shift for a median-information participant),
-# and the multiplicative scale carries the locally corresponding widths.
+# The priors are anchored on the *effect* scale theta = U / V, the Peto one-step
+# estimator of the log hazard ratio for the UCIP contrast. theta is stable in
+# location as trials accumulate and its precision V grows linearly with them, so
+# a fixed prior width on theta is a genuine effect-size prior that the data
+# eventually swamp.
 #
-# standardized anchor (phi = sqrt(V_ref) * theta):
-#   mu_phi  ~ N(0, 0.5^2)          about a 95% prior range of +/- 1 reference-Cz
-#   tau_phi ~ HalfNormal(0, 1)     broad between-subject heterogeneity
-#   tau_phi^2 ~ InvGamma(2, 0.5)   conjugate counterpart for the Gibbs sampler
+# score anchor (theta, log hazard ratio):
+#   mu_theta  ~ N(0, 0.5^2)         +/- 1 log-HR at 95%: hazard ratios in
+#                                   roughly [0.37, 2.7], weakly informative on
+#                                   the conventional log-HR scale
+#   tau_theta ~ HalfNormal(0, 0.5)  between-subject heterogeneity of the same
+#                                   order as the population effect
+#   tau_theta^2 ~ InvGamma(2, 0.25) conjugate counterpart matching that second
+#                                   moment (E[tau^2] = rate / (shape - 1))
 #
-#   multiplicative (eta = log(A/B)): prior_sd = prior_tau_sd = 0.35 keeps the
-#                   central one-SD prior capacity ratio near [0.70, 1.42]; the
-#                   InvGamma second moment matches with prior_rate = 0.35^2.
+# standardized (phi = sqrt(V_ref) * theta) is the *same model* reported on the
+# reference-Cz scale, so its priors are the theta priors pushed through that
+# linear map: every width is multiplied by sqrt(V_ref) (variances by V_ref).
+# This is why V_ref is an argument here. Using a fixed width on phi instead --
+# as an earlier version did -- implies a prior on theta of width
+# prior_sd / sqrt(V_ref), which tightens at exactly the rate the likelihood
+# sharpens and therefore never washes out, no matter how many trials are run.
+#
+# multiplicative (eta = log(A/B)) is already dimensionless: prior_sd =
+# prior_tau_sd = 0.35 keeps the central one-SD prior capacity ratio near
+# [0.70, 1.42]; the InvGamma second moment matches with prior_rate = 0.35^2.
 .sft_default_priors <- function(score_method, V_ref) {
   if (score_method == "multiplicative") {
-    list(prior_sd = 0.35, prior_tau_sd = 0.35,
-         prior_shape = 2, prior_rate = 0.35^2)
-  } else {
-    list(prior_sd = 0.5, prior_tau_sd = 1,
-         prior_shape = 2, prior_rate = 0.5)
+    return(list(prior_sd = 0.35, prior_tau_sd = 0.35,
+                prior_shape = 2, prior_rate = 0.35^2))
   }
+  theta_sd <- 0.5
+  theta_tau_sd <- 0.5
+  # On the phi scale every location/scale is multiplied by sqrt(V_ref); the
+  # InvGamma rate is a variance and so scales by V_ref itself.
+  scale <- if (score_method == "standardized") {
+    if (is.null(V_ref) || !is.finite(V_ref) || V_ref <= 0) 1 else sqrt(V_ref)
+  } else 1
+  list(prior_sd = theta_sd * scale,
+       prior_tau_sd = theta_tau_sd * scale,
+       prior_shape = 2,
+       prior_rate = theta_tau_sd^2 * scale^2)
 }
 
 
@@ -413,19 +509,18 @@
 }
 
 
-# The effect a single UCIP bootstrap replicate contributes: the
-# reference-information standardized score effect phi for method =
+# The effect a single UCIP bootstrap replicate contributes: the log hazard ratio
+# theta for method = "score", the reference-Cz rescaling phi for method =
 # "standardized", or the log-capacity ratio for the "multiplicative"
 # (eta = log(A/B)) method. For the standardized score, v_ref is supplied by the
 # original fitted participants and is held fixed across bootstrap replicates.
 .sft_ucip_boot_effect <- function(rt, CR, stopping.rule, method,
                                   v_ref = NULL) {
   s <- .sft_ucip_score(rt, CR, stopping.rule = stopping.rule)
-  if (method == "multiplicative") {
-    s$log_capacity
-  } else {
-    (s$numer / s$variance) * sqrt(v_ref)
-  }
+  switch(method,
+         multiplicative = s$log_capacity,
+         standardized = (s$numer / s$variance) * sqrt(v_ref),
+         s$numer / s$variance)
 }
 
 
@@ -457,7 +552,8 @@
 
 
 .sft_ucip_score_data <- function(input, stopping.rule,
-                                 method = c("standardized", "multiplicative"),
+                                 method = c("score", "standardized",
+                                            "multiplicative"),
                                  var_method = "analytic", n_boot = 2000L) {
   method <- .sft_score_method(method)
   var_method <- .sft_var_method(var_method)
@@ -508,13 +604,16 @@
   # computed after degenerate-subject dropping so it is based on exactly the
   # participants entering the fit. For one participant this makes phi_hat = Cz
   # and its analytic precision equal to one by construction. It is computed for
-  # both methods even though only "standardized" rescales the effect by it.
+  # every method even though only "standardized" rescales the effect by it.
   V_ref <- stats::median(V)
   phi_hat <- theta_hat * sqrt(V_ref)
 
-  effect_hat <- if (method == "multiplicative") eta_hat else phi_hat
-  precision <- if (method == "multiplicative") eta_precision else V / V_ref
-  effect_name <- if (method == "multiplicative") "eta" else "phi"
+  effect_hat <- switch(method, multiplicative = eta_hat,
+                       standardized = phi_hat, theta_hat)
+  precision <- switch(method, multiplicative = eta_precision,
+                      standardized = V / V_ref, V)
+  effect_name <- switch(method, multiplicative = "eta",
+                        standardized = "phi", "theta")
 
   # An optional within-subject bootstrap variance for the active effect scale.
   # It replaces the closed-form precision used by the hierarchy; the analytic
@@ -533,7 +632,19 @@
     used_se <- 1 / sqrt(precision)
   }
 
-  score_df <- if (method == "standardized") {
+  score_df <- if (method == "score") {
+    data.frame(
+      subject = input$subject,
+      U = U,
+      V = V,
+      theta_hat = theta_hat,
+      hazard_ratio_hat = exp(theta_hat),
+      se = used_se,
+      se_analytic = analytic_se,
+      Cz = vapply(scores, function(x) unname(x$statistic), numeric(1)),
+      stringsAsFactors = FALSE
+    )
+  } else if (method == "standardized") {
     data.frame(
       subject = input$subject,
       U = U,
@@ -606,11 +717,17 @@
   summaries <- lapply(seq_len(ncol(parameter_draws)), function(j) {
     x <- parameter_draws[, j]
     interval <- .sft_hdi(x, hdi)
-    rope_probability <- if (is.null(rope)) NA_real_ else mean(abs(x) <= rope)
+    # tau is a non-negative between-subject scale, not a signed effect: its sign
+    # probabilities are 1 and 0 by construction and a ROPE around zero is not a
+    # practical-equivalence statement, so those columns are left NA rather than
+    # reported as though they were inferential.
+    signed <- !identical(parameter_names[j], "tau")
+    rope_probability <- if (is.null(rope) || !signed) NA_real_ else
+      mean(abs(x) <= rope)
     data.frame(parameter = parameter_names[j], mean = mean(x),
                lower = interval[["lower"]], upper = interval[["upper"]],
-               posterior_positive = mean(x > 0),
-               posterior_negative = mean(x < 0),
+               posterior_positive = if (signed) mean(x > 0) else NA_real_,
+               posterior_negative = if (signed) mean(x < 0) else NA_real_,
                posterior_rope = rope_probability,
                stringsAsFactors = FALSE)
   })
@@ -642,8 +759,6 @@
   pairs <- floor(length(rho) / 2L)
   if (!pairs) return(as.numeric(n))
   gamma <- rho[2L * seq_len(pairs) - 1L] + rho[2L * seq_len(pairs)]
-  keep <- which(gamma > 0)
-  if (!length(keep)) return(as.numeric(n))
   first_nonpositive <- which(gamma <= 0)
   last <- if (length(first_nonpositive)) min(first_nonpositive) - 1L else length(gamma)
   if (last < 1L) return(as.numeric(n))
@@ -785,53 +900,54 @@
 .sft_stan_model_cache <- new.env(parent = emptyenv())
 
 
+# The generated model carries a condition index so one population mean mu[c] is
+# estimated per condition over a shared tau. With C = 1 and every cond[i] = 1
+# this is exactly the single-mean model.
 .sft_stan_code <- function(method, effect_name = "phi",
                            precision_name = "W") {
   effect_hat_name <- paste0(effect_name, "_hat")
-  if (method == "HalfNormal") {
-    return(paste0("data {
+  data_block <- paste0("data {
   int<lower=1> N;
+  int<lower=1> C;
+  int<lower=1, upper=C> cond[N];
   vector[N] ", effect_hat_name, ";
   vector<lower=0>[N] ", precision_name, ";
   real prior_mean;
   real<lower=0> prior_sd;
   real<lower=0> prior_tau_sd;
 }
-parameters {
-  real mu;
+")
+  likelihood <- paste0("  for (i in 1:N)
+    ", effect_hat_name, "[i] ~ normal(", effect_name, "[i], 1 / sqrt(",
+                       precision_name, "[i]));\n}")
+  if (method == "HalfNormal") {
+    return(paste0(data_block, "parameters {
+  vector[C] mu;
   real<lower=0> tau;
   vector[N] z;
 }
 transformed parameters {
   vector[N] ", effect_name, ";
-  ", effect_name, " = mu + tau * z;
+  for (i in 1:N)
+    ", effect_name, "[i] = mu[cond[i]] + tau * z[i];
 }
 model {
   mu ~ normal(prior_mean, prior_sd);
   tau ~ normal(0, prior_tau_sd);
   z ~ normal(0, 1);
-  for (i in 1:N)
-    ", effect_hat_name, "[i] ~ normal(", effect_name, "[i], 1 / sqrt(", precision_name, "[i]));", "}"))
+", likelihood))
   }
-  paste0("data {
-  int<lower=1> N;
-  vector[N] ", effect_hat_name, ";
-  vector<lower=0>[N] ", precision_name, ";
-  real prior_mean;
-  real<lower=0> prior_sd;
-  real<lower=0> prior_tau_sd;
-}
-parameters {
-  real mu;
+  paste0(data_block, "parameters {
+  vector[C] mu;
   real<lower=0> tau;
   vector[N] ", effect_name, ";
 }
 model {
   mu ~ normal(prior_mean, prior_sd);
   tau ~ normal(0, prior_tau_sd);
-  ", effect_name, " ~ normal(mu, tau);
   for (i in 1:N)
-    ", effect_hat_name, "[i] ~ normal(", effect_name, "[i], 1 / sqrt(", precision_name, "[i]));", "}")
+    ", effect_name, "[i] ~ normal(mu[cond[i]], tau);
+", likelihood)
 }
 
 
@@ -857,13 +973,19 @@ model {
                                     burnin, thin, chains, prior_mean,
                                     prior_sd, prior_tau_sd, seed,
                                     adapt_delta, max_treedepth, stan_control,
-                                    effect_name = "phi") {
+                                    effect_name = "phi", group = NULL) {
+  if (is.null(group)) group <- rep(1L, length(effect_hat))
+  group <- as.integer(group)
+  n_group <- max(group)
   if (!requireNamespace("rstan", quietly = TRUE)) {
     stop("method='", method, "' requires the optional 'rstan' package.")
   }
-  precision_name <- if (effect_name == "eta") "P" else "W"
+  precision_name <- switch(effect_name, eta = "P", phi = "W", "V")
   code <- .sft_stan_code(method, effect_name, precision_name)
-  key <- paste0(method, "_", as.character(prior_tau_sd), "_", effect_name)
+  # prior_tau_sd enters the model as *data*, not as a literal in the generated
+  # code, so it must not discriminate the compiled-model cache: including it
+  # forced a fresh (identical) compile for every distinct prior width.
+  key <- paste0(method, "_", effect_name)
   model <- if (exists(key, envir = .sft_stan_model_cache, inherits = FALSE)) {
     get(key, envir = .sft_stan_model_cache, inherits = FALSE)
   } else {
@@ -878,7 +1000,7 @@ model {
     stan_control
   )
   stan_seed <- if (is.null(seed)) -1L else seed
-  stan_data <- list(N = length(effect_hat),
+  stan_data <- list(N = length(effect_hat), C = n_group, cond = group,
                     prior_mean = prior_mean, prior_sd = prior_sd,
                     prior_tau_sd = prior_tau_sd)
   stan_data[[paste0(effect_name, "_hat")]] <- effect_hat
@@ -898,13 +1020,23 @@ model {
     stop("Stan did not return the expected participant effects.")
   }
   effect_idx <- effect_idx[order(as.integer(gsub("[^0-9]", "", variables[effect_idx])))]
+  mu_idx <- grep("^mu(\\[|$)", variables)
+  mu_idx <- mu_idx[order(as.integer(gsub("[^0-9]", "", paste0(variables[mu_idx], "1"))))]
+  if (length(mu_idx) != n_group) {
+    stop("Stan did not return the expected condition means.")
+  }
   chain_array <- array(NA_real_,
-                       dim = c(dim(raw)[1L], dim(raw)[2L], 2L + length(effect_hat)))
-  chain_array[, , 1L] <- raw[, , match("mu", variables)]
-  chain_array[, , 2L] <- raw[, , match("tau", variables)]
-  for (j in seq_along(effect_idx)) chain_array[, , 2L + j] <- raw[, , effect_idx[j]]
-  dimnames(chain_array) <- list(NULL, NULL,
-                                c("mu", "tau", paste0(effect_name, "[", seq_along(effect_hat), "]")))
+                       dim = c(dim(raw)[1L], dim(raw)[2L],
+                               n_group + 1L + length(effect_hat)))
+  for (j in seq_len(n_group)) chain_array[, , j] <- raw[, , mu_idx[j]]
+  chain_array[, , n_group + 1L] <- raw[, , match("tau", variables)]
+  for (j in seq_along(effect_idx)) {
+    chain_array[, , n_group + 1L + j] <- raw[, , effect_idx[j]]
+  }
+  dimnames(chain_array) <- list(
+    NULL, NULL,
+    c(if (n_group == 1L) "mu" else paste0("mu[", seq_len(n_group), "]"), "tau",
+      paste0(effect_name, "[", seq_along(effect_hat), "]")))
   list(chain_array = chain_array, fit = fit,
        sampler_diagnostics = .sft_stan_sampler_diagnostics(fit, max_treedepth))
 }

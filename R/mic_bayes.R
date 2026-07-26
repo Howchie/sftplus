@@ -91,6 +91,19 @@
 }
 
 
+# Condition levels available to micGroup.bayes(). A data frame with several
+# conditions and no explicit selection fits them all; anything else is one level.
+.sft_mic_condition_levels <- function(inData, Condition = NULL) {
+  if (!is.null(Condition)) return(unique(as.character(Condition)))
+  if (!is.data.frame(inData)) return("default")
+  data <- .sft_normalize_columns(inData)
+  if (!"Condition" %in% names(data)) return("default")
+  present <- as.character(data$Condition)
+  if (anyNA(present)) stop("Condition must not contain missing values.", call. = FALSE)
+  sort(unique(present))
+}
+
+
 # Normalise micGroup.bayes() input to a named list of per-subject cell lists.
 # Accepts a canonical data frame, a nested list (one HH/HL/LH/LL list per
 # participant), or a flat single-subject HH/HL/LH/LL list.
@@ -231,7 +244,7 @@
     stringsAsFactors = FALSE
   )
   if (var_method == "bootstrap") score_df$se_analytic <- analytic_se
-  list(subject = subject, effect_hat = rho, precision = precision,
+  list(subject = subject, effect_hat = unname(rho), precision = unname(precision),
        effect_name = "rho", var_method = var_method, score = score_df)
 }
 
@@ -348,24 +361,26 @@ micGroup.bayes <- function(inData, Condition = NULL, Subject = NULL,
                            prior_rate, prior_mean, prior_sd, prior_tau_sd,
                            hdi, rope, adapt_delta, max_treedepth)
   .sft_validate_boot(var_method, n_boot)
-  input <- .sft_mic_input(inData, Condition = Condition, Subject = Subject,
-                          correct = correct)
 
-  # The seed is set before scoring so an optional bootstrap variance and the
-  # sampler share one reproducible RNG stream; analytic scoring is deterministic.
+  levels <- .sft_mic_condition_levels(inData, Condition)
   old_seed <- .sft_bayes_seed(seed)
   on.exit(.sft_restore_bayes_seed(old_seed), add = TRUE)
-  scored <- .sft_mic_score_data(input$cells, input$subject, var_method, n_boot)
-  subject <- scored$subject
-  effect_hat <- scored$effect_hat
-  precision <- scored$precision
+  grouped <- list(
+    levels = levels,
+    multi_condition = length(levels) > 1L,
+    conditions = setNames(lapply(levels, function(level) {
+      .sft_mic_input(inData, Condition = if (identical(level, "default")) NULL else level,
+                     Subject = Subject, correct = correct)
+    }), levels))
+  scored <- .sft_condition_score(grouped, function(input)
+    .sft_mic_score_data(input$cells, input$subject, var_method, n_boot))
+
   effect_name <- "rho"
-  observed_name <- "rho_hat"
   estimand <- "relative MIC = MIC / equal-weight grand-mean RT"
 
-  if (length(subject) == 1L) {
-    fit <- .sft_normal_analytic_fit(effect_hat[[1L]], precision[[1L]],
-                                    subject[[1L]], effect_name, ndraws, chains,
+  if (length(scored$effect_hat) == 1L && !scored$multi_condition) {
+    fit <- .sft_normal_analytic_fit(scored$effect_hat[[1L]], scored$precision[[1L]],
+                                    scored$subject[[1L]], effect_name, ndraws, chains,
                                     prior_mean, prior_sd, hdi, rope)
     # The relative MIC is dimensionless with a proportional ROPE, so the
     # interval null (negligible interaction) is the meaningful test; an exact
@@ -374,76 +389,60 @@ micGroup.bayes <- function(inData, Condition = NULL, Subject = NULL,
                                                point = FALSE, interval = TRUE)
     prior_predictive <- list(score = fit$prior_score)
     prior_predictive[[effect_name]] <- fit$prior_effect
-    prior_predictive <- prior_predictive[c(effect_name, "score")]
     prior <- list(rope = rope)
     prior[[effect_name]] <- list(mean = prior_mean, sd = prior_sd)
     return(list(
       statistic = setNames(mean(fit$effect_draws[, 1L]), fit$subject_parameter),
-      posterior_probability = .sft_mic_subject_probs(fit$effect_draws, subject, rope),
+      posterior_probability = .sft_mic_subject_probs(fit$effect_draws,
+                                                     scored$subject, rope),
       bayes_factor = bayes_factor,
       summary = fit$summary, population_summary = NULL,
       subject_summary = fit$subject_summary, score = scored$score,
-      draws = fit$draws, prior_predictive = prior_predictive,
+      draws = fit$draws,
+      prior_predictive = prior_predictive[c(effect_name, "score")],
       posterior_predictive = fit$posterior_predictive,
       diagnostics = fit$diagnostics, shrinkage_summary = fit$shrinkage_summary,
       shrinkage_draws = fit$shrinkage_draws,
+      refit_data = list(effect_hat = scored$effect_hat,
+                        precision = scored$precision, subject = scored$subject,
+                        effect_name = effect_name),
       method = "Analytic single-subject normal-normal posterior",
       method_code = "Analytic",
       alternative = "the participant relative mean interaction contrast is nonzero",
       prior = prior,
-      model = .sft_mic_model(observed_name, effect_name, "V", method = "Analytic",
+      model = .sft_mic_model("rho_hat", effect_name, "V", method = "Analytic",
                              hierarchy = FALSE, var_method = var_method),
       estimand = estimand, var_method = var_method,
       hdi = hdi, ndraws = ndraws, burnin = 0L, thin = 1L, chains = chains,
       seed = seed))
   }
 
-  fit <- .sft_normal_hierarchy_fit(effect_hat, precision, subject, effect_name,
-                                   method, ndraws, burnin, thin, chains,
-                                   prior_mean, prior_sd, prior_shape, prior_rate,
-                                   prior_tau_sd, seed, adapt_delta, max_treedepth,
-                                   stan_control, hdi, rope)
-  mu_draws <- fit$mu_draws
-  # Interval null on the dimensionless population relative MIC (the exact point
-  # null at mu = 0 is omitted; see the single-subject branch).
-  bayes_factor <- .sft_hierarchy_bayes_factor(fit, prior_mean, prior_sd, rope,
-                                              point = FALSE, interval = TRUE)
-  prior <- if (method == "InvGamma") {
-    list(mu = list(mean = prior_mean, sd = prior_sd),
-         tau2 = list(family = "inverse-Gamma", shape = prior_shape,
-                     rate = prior_rate), rope = rope)
-  } else {
-    list(mu = list(mean = prior_mean, sd = prior_sd),
-         tau = list(family = "half-Normal", sd = prior_tau_sd), rope = rope)
-  }
-  list(
-    statistic = setNames(mean(mu_draws), "mu"),
-    posterior_probability = c(
-      list(population_overadditive = mean(mu_draws > 0),
-           population_underadditive = mean(mu_draws < 0),
-           population_additive = if (is.null(rope)) NA_real_ else
-             mean(abs(mu_draws) <= rope)),
-      .sft_mic_subject_probs(fit$effect_draws, subject, rope)
-    ),
-    bayes_factor = bayes_factor,
-    summary = fit$summary, population_summary = fit$population,
-    subject_summary = fit$subject_summary, score = scored$score,
-    draws = fit$draws, prior_predictive = fit$prior_predictive,
-    posterior_predictive = fit$posterior_predictive,
-    diagnostics = fit$diagnostics, sampler_diagnostics = fit$sampler_diagnostics,
-    shrinkage_summary = fit$shrinkage_summary, shrinkage_draws = fit$shrinkage_draws,
-    stan_fit = fit$stan_fit,
-    method = if (method == "InvGamma") {
-      "Hierarchical Bayesian relative-MIC model"
-    } else {
-      paste(method, "Bayesian relative-MIC model")
-    },
-    method_code = method,
+  priors <- list(prior_sd = prior_sd, prior_tau_sd = prior_tau_sd,
+                 prior_shape = prior_shape, prior_rate = prior_rate)
+  out <- .sft_normal_group_result(
+    scored = scored, priors = priors, prior_mean = prior_mean, method = method,
+    ndraws = ndraws, burnin = burnin, thin = thin, chains = chains, seed = seed,
+    adapt_delta = adapt_delta, max_treedepth = max_treedepth,
+    stan_control = stan_control, hdi = hdi, rope = rope,
+    label = "relative-MIC",
     alternative = "the population relative mean interaction contrast is nonzero",
-    prior = prior,
-    model = .sft_mic_model(observed_name, effect_name, "V", method = method,
-                           hierarchy = TRUE, var_method = var_method),
-    estimand = estimand, var_method = var_method,
-    hdi = hdi, ndraws = ndraws, burnin = burnin, thin = thin, chains = chains,
-    seed = seed)
+    interpretation = .sft_mic_model("rho_hat", effect_name, "V", method = method,
+                                    hierarchy = TRUE,
+                                    var_method = var_method)$interpretation,
+    # rho = 0 is a knife-edge on a dimensionless scale: the interval null is the
+    # meaningful architecture test, so the exact point null is not reported.
+    point_null = FALSE, interval_null = TRUE, precision_name = "V",
+    extra = list(estimand = estimand, var_method = var_method))
+  # Report the architecture-facing names alongside the generic super/limited ones.
+  out$posterior_probability <- c(
+    list(population_overadditive = out$posterior_probability$population_super,
+         population_underadditive = out$posterior_probability$population_limited,
+         population_additive = out$posterior_probability$population_rope),
+    .sft_mic_subject_probs(
+      as.matrix(out$draws[, grepl("^rho\\[", names(out$draws)), drop = FALSE]),
+      scored$subject, rope))
+  out$model <- c(.sft_mic_model("rho_hat", effect_name, "V", method = method,
+                                hierarchy = TRUE, var_method = var_method),
+                 list(conditions = scored$levels))
+  out
 }
