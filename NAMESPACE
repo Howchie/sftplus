@@ -7,8 +7,10 @@ export(estimate.bounds, assessment, assessmentGroup, fPCAassessment, fPCAcapacit
        resilience, resilience.test, resilience.bayes, resilienceGroup.bayes,
        simulate_sft, simulate_sft_group, correctfun,
        assessment_ta_or, assessment_ta_and, assessment_donkin_discrimination,
+       rmi.test, rmiGroup.bayes,
        build_ct_df, build_sic_df,
        build_at_df, build_cdf_df, get_time_range, smooth_one_cdf,
+       build_rmi_cdf_df, build_rmi_bound_df, build_rmi_violation_df,
        find_equal_vc_yes, semiparametricSFT.bayes, mic.bayes, sic.bayes,
        sft_data_to_rt, prior_sensitivity, spike_slab, sft_waic)
 S3method(print, sft_bayes)

@@ -68,6 +68,44 @@ Later Bayesian additions:
 - `spike_slab()` gives each participant an exact-zero spike or the population
   slab, returning per-participant inclusion probabilities and Bayes factors. The
   inclusion rate w is estimated, so participants shrink toward one another.
+- Race model inequality (`R/rmi.R`). Miller's (1982) bound is a different
+  hypothesis from the UCIP capacity coefficient: C_OR(t) > 1 rejects one specific
+  model (independent, unlimited-capacity parallel), whereas the race bound holds
+  for *every* race model regardless of dependence or capacity, so super capacity
+  does not imply a Miller violation and a limited-capacity race violates UCIP
+  while satisfying Miller. Nothing in the file reuses the UCIP score.
+  - `rmi.test()` reproduces the classical Ulrich-Miller-Schroeter procedure on
+    the millisecond scale, for replications and for the figure.
+  - `rmiGroup.bayes()` tests the same inequality on the *probability* scale:
+    delta_ik = F_A(t_ik) + F_B(t_ik) - F_AB(t_ik), where t_ik is the u_k-th
+    quantile of participant i's own pooled correct single-target RTs. Evaluating
+    the inequality within a participant makes overall speed cancel exactly, and
+    the estimand is invariant to any strictly increasing reparameterisation of
+    time applied to all three of a participant's conditions, which is what
+    licenses pooling on the shared u index. The classical procedure instead
+    averages millisecond quantiles across participants, where a slow
+    participant's 40 ms violation outweighs a fast participant's equally severe
+    15 ms one and real violations can cancel across differing base times.
+  - The hierarchy is the existing normal-normal engine with the percentile level
+    playing the role the Condition factor plays elsewhere: mu_k per level over a
+    shared tau. The global summary is min_k mu_k, whose P(< 0) is the
+    multiplicity-honest counterpart of the classical family of per-percentile
+    t-tests. It concerns the tested grid only.
+  - Percentile levels where the bound is already vacuous are not fitted: for the
+    Miller bound F_A + F_B reaches 1 near the median of the single-target
+    distributions, so a default grid covers the fast half of the distribution,
+    which is where violations occur.
+  - `errors = "defective"` counts errors in the denominator (each cell CDF is
+    P(correct, RT <= t), asymptote = accuracy) instead of discarding them.
+    Prefer it when accuracy differs across cells, since discarding renormalises
+    away the extra correct responses of a condition that is both faster and more
+    accurate. The classical time-scale route is correct-only by construction.
+  - `build_rmi_bound_df()` / `build_rmi_cdf_df()` / `build_rmi_violation_df()`
+    return tidy data frames in the same spirit as `build_cdf_df()`; ggplot2 stays
+    in Suggests. The bound builder is the AB-against-(A + B) figure. Its
+    quantiles are averaged across participants ("Vincentized"), which *is*
+    base-time dependent -- it is the picture, and the probability-scale violation
+    curve is the inference.
 - `sft_waic()` returns WAIC (and PSIS-LOO when the optional `loo` package is
   installed) from the pointwise Poisson log-likelihood emitted by the Stan
   models' generated quantities blocks. The criteria are cell-wise: predictive
