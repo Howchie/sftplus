@@ -819,21 +819,35 @@ fPCArdiff<- function(sftData, dimensions, ratio=TRUE, register=c("median","mean"
 
 # ---- Capacity-style resilience coefficient and its UCIP-based test ----
 
+# Resilience shares the functional form of the OR capacity coefficient (Little,
+# Eidels, Fific & Wang, 2015, Eq. 11): R(t) = H_AB(t) / (H_AY(t) + H_XB(t)),
+# with the single-target-plus-distractor conditions AY and XB in place of the
+# single targets A and B. Its statistical test is therefore the Houpt-Townsend
+# (2012) weighted-logrank score statistic on that contrast, as Houpt and Little
+# (2016) derived and as `conflict.contrast.test()` above does for the CCF.
+#
+# It is NOT the difference of Nelson-Aalen estimators read off at the terminal
+# time. For complete data the Nelson-Aalen cumulative hazard at a sample's own
+# maximum is exactly the harmonic number sum_{k=1}^{n} 1/k, whatever the
+# distribution, so all three series coincide there and the contrast degenerates
+# to -H_n for every dataset. The score statistic instead accumulates
+# risk-set-weighted increments across the whole observed time course.
 resilience.test <- function(RT, CR = NULL, Condition = NULL, Subject = NULL) {
   converted <- .sft_as_rt_cr(RT, CR, stopping.rule = "OR",
                              Condition = Condition, Subject = Subject)
   RT <- converted$RT; CR <- converted$CR
   if (length(RT) < 3L) stop("RT must contain AB, A, and B conditions.")
-  CR <- .sft_cr_list(RT[1:3], CR)
-  times <- .sft_finite_times(RT[1:3])
-  h <- lapply(1:3, function(i) estimateNAH(RT[[i]], CR[[i]]))
-  contrast <- h[[1]]$H(times) - h[[2]]$H(times) - h[[3]]$H(times)
-  v <- h[[1]]$Var(times) + h[[2]]$Var(times) + h[[3]]$Var(times)
-  z <- contrast[length(contrast)] / sqrt(v[length(v)])
-  p <- if (is.finite(z)) 2 * min(stats::pnorm(z), 1 - stats::pnorm(z)) else NA_real_
-  .sft_htest(setNames(z, "z"), p,
-             "response times are different than those predicted by the UCIP-OR model",
-             "Resilience test", deparse(substitute(RT)))
+  RT <- RT[1:3]
+  CR <- .sft_cr_list(RT, CR)
+  score <- .sft_ucip_score(RT, CR, stopping.rule = "OR")
+  out <- .sft_htest(score$statistic, score$p.value,
+                    "response times are different than those predicted by the UCIP-OR model",
+                    "Houpt-Little resilience test", deparse(substitute(RT)))
+  # Score components, as ucip.test() exposes them, for the Bayesian companion.
+  out$numer <- score$numer
+  out$variance <- score$variance
+  out$denom <- score$denom
+  out
 }
 
 

@@ -10,36 +10,33 @@
   with their pairwise contrasts.
 }
 \usage{
-resilience.bayes(inData, CR = NULL, at = NULL, at_quantile = 0.5, ndraws = 10000L,
+resilience.bayes(inData, CR = NULL, ndraws = 10000L,
                  seed = NULL, hdi = .94, prior_mean = 0, prior_sd = NULL, chains = 4L,
                  rope = NULL, Condition = NULL, Subject = NULL,
-                 score_method = c("multiplicative", "difference"),
+                 score_method = c("score", "standardized", "multiplicative"),
                  var_method = c("analytic", "bootstrap"), n_boot = 2000L)
 
-resilienceGroup.bayes(inData, CR = NULL, at = NULL, at_quantile = 0.5, ndraws = 10000L,
+resilienceGroup.bayes(inData, CR = NULL, ndraws = 10000L,
                       prior_shape = NULL, prior_rate = NULL, seed = NULL, hdi = .94,
                       prior_mean = 0, prior_sd = NULL, burnin = 1000L, thin = 1L,
                       chains = 4L, rope = NULL,
                       method = c("InvGamma", "HalfNormal", "Centered"),
                       prior_tau_sd = NULL, adapt_delta = .95, max_treedepth = 12L,
                       stan_control = list(), Condition = NULL, Subject = NULL,
-                      score_method = c("multiplicative", "difference"),
+                      score_method = c("score", "standardized", "multiplicative"),
                       var_method = c("analytic", "bootstrap"), n_boot = 2000L)
 }
 \arguments{
-  \item{inData}{Canonical SFT data frame, or a list of AB, A, and B response-time vectors
-    (nested by participant for the group function).}
+  \item{inData}{Canonical SFT data frame, or a list of AB, AY, and XB response-time vectors
+    -- the double-target display and each single target accompanied by a distractor --
+    nested by participant for the group function.}
   \item{CR}{Optional correctness indicators; omit when \code{inData} is a data frame.}
-  \item{at}{Evaluation horizon. \code{NULL} derives it from \code{at_quantile}.}
-  \item{at_quantile}{Pooled response-time quantile defining the horizon when \code{at} is
-    \code{NULL} (default the median). See \sQuote{Details} for why the terminal time is not
-    the default.}
-  \item{score_method}{\code{"multiplicative"} (default), the log resilience ratio
-    \eqn{\psi = \log(H_{AB} / (H_A + H_B))}; or \code{"difference"}, the cumulative-hazard
-    contrast \eqn{\delta = H_{AB} - H_A - H_B}. Both are exactly zero under the UCIP-OR
-    benchmark.}
-  \item{var_method, n_boot}{\code{"analytic"} Nelson-Aalen variance (delta-method for
-    \eqn{\psi}) or a within-condition \code{"bootstrap"} variance.}
+  \item{score_method}{\code{"score"} (default), the log-hazard-ratio effect
+    \eqn{\theta = U/V} with precision \eqn{V}; \code{"standardized"}, the same effect on the
+    reference-Cz scale \eqn{\phi = \theta\sqrt{V_{ref}}}; or \code{"multiplicative"},
+    \eqn{\eta = \log(A/B)}. All three are exactly zero under the UCIP-OR benchmark.}
+  \item{var_method, n_boot}{\code{"analytic"} martingale variance or a within-condition
+    \code{"bootstrap"} variance.}
   \item{Condition}{Condition selector. \code{NULL} fits every condition present in a data
     frame; supplying one value reproduces the single-condition fit.}
   \item{Subject}{Optional subject selector.}
@@ -52,28 +49,39 @@ resilienceGroup.bayes(inData, CR = NULL, at = NULL, at_quantile = 0.5, ndraws = 
   \item{adapt_delta, max_treedepth, stan_control}{NUTS adaptation controls.}
 }
 \details{
-  The resilience contrast compares the dual-target cumulative hazard against the UCIP-OR
-  prediction \eqn{H_{AB} = H_A + H_B}. Both effect scales are zero exactly when that holds,
-  so the point null is the UCIP-OR benchmark on either.
+  Resilience (Little, Eidels, Fific & Wang, 2015) shares the functional form of the OR
+  capacity coefficient,
+  \deqn{R(t) = H_{AB}(t) / (H_{AY}(t) + H_{XB}(t)),}
+  differing only in which trials enter it: the denominator uses single-target displays that
+  still carry distracting information rather than lone targets. Houpt and Little (2016)
+  accordingly build its statistical test on the Houpt-Townsend (2012) weighted-logrank score
+  statistic, and these functions reuse that machinery verbatim -- so
+  \code{resilience.bayes} is \code{\link{ucip.bayes}} applied to the resilience conditions,
+  and \code{theta_hat * sqrt(V)} reproduces \code{\link{resilience.test}} exactly.
 
-  \strong{The evaluation horizon matters, and the terminal time is a bad choice.} For
-  complete (uncensored) data the Nelson-Aalen cumulative hazard at a sample's own maximum is
-  exactly the harmonic number \eqn{\sum_{k=1}^{n} 1/k} \emph{whatever the distribution}.
-  All three series therefore coincide there, the contrast collapses to \eqn{-H_n} for every
-  dataset, and \eqn{\psi} is \eqn{-\log 2} identically. Censoring softens this but the tail
-  stays uninformative. These functions accordingly default to a central quantile of the
-  pooled response times, clipped to stay inside every participant's observed range.
-  \code{\link{resilience.test}} evaluates at the terminal time and is affected by this.
-
-  \eqn{\psi} is the default scale for pooling because it is horizon-robust: it compares two
-  cumulative hazards to each other rather than reporting an absolute level.  \eqn{\delta} is
-  an absolute quantity and is comparable across participants only at a shared horizon, which
-  is why the group function always evaluates every participant at one time.
+  There is consequently \strong{no evaluation horizon}. The score statistic accumulates
+  risk-set-weighted increments across the whole observed time course. That is what makes it
+  well behaved where a cumulative hazard read off at a single late time is not: for complete
+  data the Nelson-Aalen cumulative hazard at a sample's own maximum is exactly the harmonic
+  number \eqn{\sum_{k=1}^{n} 1/k} \emph{whatever the distribution}, so all three series
+  coincide there and the contrast carries no information about the UCIP-OR benchmark.
 }
 \value{
   A list mirroring \code{\link{ucip.bayes}} or \code{\link{capacityGroup.bayes}}, with the
-  evaluation horizon in \code{at} and, for multi-condition fits,
-  \code{condition_contrasts}.
+  per-participant scores in \code{score}, the reference information in \code{V_ref}, and,
+  for multi-condition fits, \code{condition_contrasts}.
 }
-\seealso{\code{\link{resilience.test}}, \code{\link{capacityGroup.bayes}},
-  \code{\link{spike_slab}}, \code{\link{prior_sensitivity}}}
+\references{
+  Little, D. R., Eidels, A., Fific, M., & Wang, T. S. L. (2015). Understanding the influence
+  of distractors on workload capacity. \emph{Journal of Mathematical Psychology},
+  \bold{68--69}, 25--36.
+
+  Houpt, J. W., & Little, D. R. (2016). Statistical analysis of the resilience function.
+  \emph{Behavior Research Methods}.
+
+  Houpt, J. W., & Townsend, J. T. (2012). Statistical measures for workload capacity
+  analysis. \emph{Journal of Mathematical Psychology}, \bold{56}, 341--355.
+}
+\seealso{\code{\link{resilience.test}}, \code{\link{ucip.bayes}},
+  \code{\link{capacityGroup.bayes}}, \code{\link{spike_slab}},
+  \code{\link{prior_sensitivity}}}

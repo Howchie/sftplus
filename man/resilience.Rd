@@ -19,11 +19,33 @@ resilience.test(RT, CR = NULL, Condition = NULL, Subject = NULL)
   \item{Subject}{Optional string selecting one subject from the data frame.}
 }
 \value{
-  \code{resilience} returns a function that evaluates resilience capacity over time. 
-  \code{resilience.test} returns a list with the test statistic, bounds, and inference details.
+  \code{resilience} returns \code{Rt} (and \code{Var} when \code{ratio = FALSE}) together
+  with \code{Rtest}. \code{resilience.test} returns an \code{htest} whose statistic is the
+  standard normal score statistic \eqn{z}, with the score components \code{numer},
+  \code{variance}, and \code{denom} attached.
 }
 \details{
-  Capacity resilience measures a system's robustness when shifting from simple parallel race baselines 
-  to complex configurations. It evaluates the degree to which processing speed degrades (or improves) 
-  when additional loads are imposed, relative to strict workload-capacity predictions.
+  Capacity resilience (Little, Eidels, Fific & Wang, 2015) extends the workload capacity
+  coefficient to displays containing distracting information. It has the same functional
+  form as the OR capacity coefficient,
+  \deqn{R(t) = H_{AB}(t) / (H_{AY}(t) + H_{XB}(t)),}
+  differing only in that the denominator conditions are single targets accompanied by a
+  distractor (AY, XB) rather than lone targets. \code{RT} is supplied in that order.
+
+  \code{resilience.test} is therefore the Houpt-Townsend (2012) weighted-logrank score
+  statistic applied to that contrast, as Houpt and Little (2016) derived; it accumulates
+  risk-set-weighted increments across the whole observed time course rather than reading a
+  cumulative-hazard difference off at one time. That distinction matters: for complete data
+  the Nelson-Aalen cumulative hazard at a sample's own maximum is exactly the harmonic
+  number \eqn{\sum_{k=1}^{n} 1/k} whatever the distribution, so all three series coincide
+  at the terminal time and a contrast evaluated there is the same constant for every
+  dataset.
+}
+\references{
+  Little, D. R., Eidels, A., Fific, M., & Wang, T. S. L. (2015). Understanding the influence
+  of distractors on workload capacity. \emph{Journal of Mathematical Psychology},
+  \bold{68--69}, 25--36.
+
+  Houpt, J. W., & Little, D. R. (2016). Statistical analysis of the resilience function.
+  \emph{Behavior Research Methods}.
 }

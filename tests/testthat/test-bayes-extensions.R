@@ -6,29 +6,36 @@ ucip_or_subject <- function(n = 150, rate = 1.6) {
   list(pmin(a, b), stats::rexp(n, rate), stats::rexp(n, rate))
 }
 
-super_subject <- function(n = 150, rate = 1.6, ab_rate = 5) {
+super_subject <- function(n = 150, rate = 1.6, ab_rate = 8) {
   list(stats::rexp(n, ab_rate), stats::rexp(n, rate), stats::rexp(n, rate))
 }
 
 
-test_that("the resilience horizon is not the terminal time", {
-  # For complete data the Nelson-Aalen cumulative hazard at a sample's own
-  # maximum is exactly sum(1/k) whatever the distribution, so all three series
-  # coincide there and the contrast is -H_n for every dataset.
+test_that("the resilience test uses the score statistic, not a terminal-time contrast", {
+  # Resilience shares the OR capacity functional form, so its test is the
+  # Houpt-Townsend weighted-logrank score statistic (Houpt & Little, 2016).
+  # A terminal-time Nelson-Aalen contrast cannot work: for complete data the
+  # cumulative hazard at a sample's own maximum is exactly sum(1/k) whatever
+  # the distribution, so all three series coincide there.
   set.seed(9)
   n <- 120
   rt <- list(stats::rlnorm(n, log(.33), .25), stats::rlnorm(n, log(.5), .25),
              stats::rlnorm(n, log(.5), .25))
-  terminal <- sftplus:::.sft_resilience_score(rt)
+  h <- lapply(1:3, function(i) estimateNAH(rt[[i]], rep(TRUE, n)))
+  tmax <- max(unlist(rt))
   harmonic <- sum(1 / seq_len(n))
-  expect_equal(terminal$H_AB, harmonic, tolerance = 1e-8)
-  expect_equal(terminal$H_A, harmonic, tolerance = 1e-8)
-  expect_equal(terminal$psi, -log(2), tolerance = 1e-8)
+  expect_equal(h[[1]]$H(tmax), harmonic, tolerance = 1e-8)
+  expect_equal(h[[2]]$H(tmax), harmonic, tolerance = 1e-8)
 
-  # The default horizon must therefore be interior, and must separate the series.
-  fit <- resilience.bayes(rt, ndraws = 500, chains = 2, seed = 1)
-  expect_lt(fit$at, max(unlist(rt)))
-  expect_false(isTRUE(all.equal(fit$score$H_AB, fit$score$H_A)))
+  # The score statistic separates the three regimes the terminal contrast cannot.
+  set.seed(11)
+  z <- vapply(list(super_subject(), ucip_or_subject(),
+                   list(stats::rexp(150, 1.8), stats::rexp(150, 1.6),
+                        stats::rexp(150, 1.6))),
+              function(d) unname(resilience.test(d)$statistic), numeric(1))
+  expect_gt(z[[1]], 4)
+  expect_lt(abs(z[[2]]), 2)
+  expect_lt(z[[3]], -3)
 })
 
 
@@ -38,7 +45,7 @@ test_that("resilience.bayes recovers super-capacity and the UCIP-OR null", {
   names(sup) <- paste0("s", 1:6)
   g <- resilienceGroup.bayes(sup, ndraws = 3000, burnin = 400, chains = 2, seed = 2)
   expect_gt(g$population_summary$lower[1], 0)
-  expect_gt(g$bayes_factor$point_null$BF10, 20)
+  expect_gt(g$bayes_factor$point_null$BF10, 50)
 
   set.seed(6)
   null <- lapply(1:6, function(i) ucip_or_subject())
@@ -49,14 +56,18 @@ test_that("resilience.bayes recovers super-capacity and the UCIP-OR null", {
 })
 
 
-test_that("resilience.bayes reproduces the frequentist contrast at a given time", {
+test_that("resilience.bayes is the score model on the resilience conditions", {
   set.seed(12)
-  rt <- ucip_or_subject()
-  s <- sftplus:::.sft_resilience_score(rt, at = 0.4)
-  h <- lapply(1:3, function(i) estimateNAH(rt[[i]], rep(TRUE, length(rt[[i]]))))
-  expect_equal(s$H_AB, h[[1]]$H(0.4))
-  expect_equal(s$delta, h[[1]]$H(0.4) - h[[2]]$H(0.4) - h[[3]]$H(0.4))
-  expect_equal(s$psi, log(h[[1]]$H(0.4) / (h[[2]]$H(0.4) + h[[3]]$H(0.4))))
+  rt <- super_subject()
+  fit <- resilience.bayes(rt, ndraws = 2000, chains = 2, seed = 3)
+  # theta_hat * sqrt(V) is exactly the resilience.test() z statistic.
+  expect_equal(fit$score$theta_hat * sqrt(fit$score$V),
+               unname(resilience.test(rt)$statistic), tolerance = 1e-8)
+  expect_equal(fit$score$Cz, unname(resilience.test(rt)$statistic),
+               tolerance = 1e-8)
+  # No evaluation horizon survives in the interface.
+  expect_null(fit$at)
+  expect_error(resilience.bayes(rt, at = 0.4), "unused argument")
 })
 
 

@@ -40,14 +40,24 @@ Bayesian routes:
 
 Later Bayesian additions:
 
-- `resilience.bayes()` / `resilienceGroup.bayes()` are the Bayesian companions to
-  `resilience.test()`, reusing the shared normal-normal engine. They default to
-  `score_method = "multiplicative"` (psi = log(H_AB / (H_A + H_B))). Note the
-  horizon: for complete data the Nelson-Aalen cumulative hazard at a sample's own
-  maximum equals the harmonic number sum(1/k) whatever the distribution, so all
-  three series coincide there and the contrast is -H_n for every dataset. The
-  Bayesian functions therefore evaluate at a pooled-RT quantile (`at_quantile`,
-  default the median); `resilience.test()` still uses the terminal time.
+- `resilience.test()` was fixed to use the published estimator. Resilience
+  (Little, Eidels, Fific & Wang, 2015, Eq. 11) has the *same functional form* as
+  the OR capacity coefficient, R(t) = H_AB(t) / (H_AY(t) + H_XB(t)), differing
+  only in that the denominator conditions carry distractors; Houpt & Little
+  (2016) accordingly build its test on the Houpt-Townsend (2012) weighted-logrank
+  score statistic. The old implementation instead read the Nelson-Aalen contrast
+  off at the terminal time, which is degenerate: for complete data the cumulative
+  hazard at a sample's own maximum is exactly the harmonic number sum(1/k)
+  whatever the distribution, so all three series coincide and the statistic is
+  the same constant for every dataset. Measured on three datasets (true UCIP-OR,
+  strongly super-capacity, strongly limited) the old z was -2.5220 in all three
+  and rejected the true null at p = 0.012; the score statistic gives -0.03, 5.73,
+  and -6.11.
+- `resilience.bayes()` / `resilienceGroup.bayes()` are consequently `ucip.bayes()`
+  / `capacityGroup.bayes()` applied to the resilience conditions: same score
+  machinery, same three `score_method` scales (`"score"` default), same priors.
+  There is no evaluation horizon and no `at` / `at_quantile` argument.
+  `theta_hat * sqrt(V)` reproduces `resilience.test()` exactly.
 - The hierarchical group models accept several conditions. `Condition = NULL` now
   fits every condition present, giving one mu_c per condition over a shared tau
   plus all pairwise `condition_contrasts`. Subjects are independent given
