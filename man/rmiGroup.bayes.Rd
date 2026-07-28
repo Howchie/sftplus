@@ -8,7 +8,7 @@
 }
 \usage{
 rmiGroup.bayes(inData, CR = NULL, bound = c("miller", "grice"),
-               probs = seq(.05, .95, by = .05), ndraws = 10000L,
+               probs = seq(.10, .25, by = .05), ndraws = 10000L,
                prior_shape = NULL, prior_rate = NULL, seed = NULL,
                hdi = .94, prior_mean = 0, prior_sd = NULL,
                burnin = 1000L, thin = 1L, chains = 4L, rope = NULL,
@@ -17,7 +17,10 @@ rmiGroup.bayes(inData, CR = NULL, bound = c("miller", "grice"),
                max_treedepth = 12L, stan_control = list(),
                Condition = NULL, Subject = NULL,
                var_method = c("analytic", "bootstrap"), n_boot = 2000L,
-               min_n = 5L, qtype = 8, errors = c("discard", "defective"))
+               min_n = 20L, by_block = FALSE, qtype = 5,
+               errors = c("discard", "defective"),
+               cdf_method = c("polygon", "kernel"),
+               kernel_bw = "nrd0")
 }
 \arguments{
   \item{inData}{Canonical trial data frame with \code{Subject}, \code{RT},
@@ -27,7 +30,13 @@ rmiGroup.bayes(inData, CR = NULL, bound = c("miller", "grice"),
   \item{bound}{\code{"miller"} (the upper bound, i.e. the race model
     inequality) or \code{"grice"} (the lower bound). Unlike
     \code{\link{rmi.test}} the two are fitted separately.}
-  \item{probs}{Percentile levels to evaluate.}
+  \item{probs}{Percentile levels to evaluate. The default is the 10\%--25\%
+    range recommended by Kiesel, Miller and Ulrich (2007); see
+    \code{\link{rmi.test}}. The multiplicity argument for restricting it is
+    weaker here, since the global summary is a single min-over-grid statement
+    rather than a family of tests, but the bias argument is not: estimates
+    outside that range are the ones most affected by the systematic bias they
+    document, and levels above the median are vacuous for the Miller bound.}
   \item{ndraws, burnin, thin, chains}{Sampler settings.}
   \item{seed}{Optional RNG seed.}
   \item{hdi}{Mass of the reported highest-density intervals.}
@@ -55,10 +64,30 @@ rmiGroup.bayes(inData, CR = NULL, bound = c("miller", "grice"),
     participant, which also propagates uncertainty in the percentile grid
     itself.}
   \item{n_boot}{Bootstrap replicates when \code{var_method = "bootstrap"}.}
-  \item{min_n}{Minimum correct trials required per cell.}
+  \item{min_n}{Minimum correct trials required per cell; with
+    \code{by_block = TRUE} it applies per participant, block, and cell. The
+    default of 20 is the sample size Ulrich et al. (2007) and Kiesel et al.
+    (2007) recommend; see \code{\link{rmi.test}}.}
+  \item{by_block}{Evaluate the inequality separately within each participant
+    \emph{and} block, using the \code{Block} column of \code{inData}, and
+    average the per-block \eqn{\delta} curves --- the level at which Miller
+    (1982) estimated his quantiles. This matters when overall speed drifts
+    across the session: pooling a fast late block with a slow early block
+    spreads all three cell distributions by the between-block shift, which
+    flattens their CDFs and moves the bound, whereas estimating within block
+    absorbs the drift block by block. Blocks are disjoint sets of trials and so
+    independent, which is why the sampling covariance of the block-averaged
+    delta is the sum of the per-block covariances over the squared number of
+    blocks. Blocks short of \code{min_n} in any cell are dropped, and a
+    participant with no surviving block is dropped as usual. \code{FALSE} (the
+    default) treats the whole session as one block and requires no \code{Block}
+    column.}
   \item{qtype}{Plotting-position rule for the accompanying time-scale quantile
     tables; see \code{\link{rmi.test}}. It never affects the probability-scale
     estimand.}
+  \item{cdf_method, kernel_bw}{Estimator and bandwidth for the accompanying
+    time-scale quantile tables; see \code{\link{rmi.test}}. These never affect
+    the Bayesian probability-scale estimand.}
   \item{errors}{How incorrect and omitted trials enter the cell CDFs.
     \code{"discard"} keeps correct trials only, as Miller did and as
     \code{\link{estimate.bounds}} does. \code{"defective"} keeps every trial
@@ -143,6 +172,14 @@ rmiGroup.bayes(inData, CR = NULL, bound = c("miller", "grice"),
   Ulrich, R., Miller, J., & Schroeter, H. (2007). Testing the race model
   inequality: An algorithm and computer programs. \emph{Behavior Research
   Methods}, 39, 291--302.
+
+  Kiesel, A., Miller, J., & Ulrich, R. (2007). Systematic biases and Type I
+  error accumulation in tests of the race model inequality. \emph{Behavior
+  Research Methods}, 39, 539--551.
+
+  Miller, J. (2016). Statistical facilitation and the redundant signals
+  effect: What are race and coactivation models? \emph{Attention, Perception,
+  & Psychophysics}, 78, 516--519.
 }
 \seealso{
   \code{\link{rmi.test}}, \code{\link{build_rmi_bound_df}},

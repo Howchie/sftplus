@@ -100,7 +100,8 @@
 .sft_column_aliases <- list(
   RT = c("rt"),
   Subject = c("subjects"),
-  Condition = c("LogicalRule")
+  Condition = c("LogicalRule"),
+  Block = c("block", "Blocks", "blocks", "Session", "session")
 )
 
 

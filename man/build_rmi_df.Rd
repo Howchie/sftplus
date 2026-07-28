@@ -14,20 +14,39 @@
   violation curve with its interval.
 }
 \usage{
-build_rmi_cdf_df(x, bound = NULL, condition = NULL)
-build_rmi_bound_df(x, bound = NULL, condition = NULL)
+build_rmi_cdf_df(x, bound = NULL, condition = NULL, by_block = FALSE,
+                 qtype = 5, probs = NULL,
+                 cdf_method = c("polygon", "kernel"), kernel_bw = "nrd0")
+build_rmi_bound_df(x, bound = NULL, condition = NULL, by_block = FALSE,
+                   qtype = 5, probs = NULL,
+                   cdf_method = c("polygon", "kernel"), kernel_bw = "nrd0")
 build_rmi_violation_df(x, bound = NULL, condition = NULL,
-                       scale = c("auto", "probability", "time"))
+                       scale = c("auto", "probability", "time"),
+                       by_block = FALSE, qtype = 5, probs = NULL,
+                       cdf_method = c("polygon", "kernel"),
+                       kernel_bw = "nrd0")
 }
 \arguments{
   \item{x}{The result of \code{\link{rmi.test}} or
     \code{\link{rmiGroup.bayes}}, or any single per-bound / per-condition
-    element of one.}
+    element of one, or a raw trial data frame.}
   \item{bound}{Optional bound to keep when the result holds both.}
   \item{condition}{Optional condition(s) to keep.}
+  \item{probs}{Optional percentile levels. For raw trial data these are passed
+  to \code{rmi.test}; for an existing result they select levels already
+  present in that result. If omitted, the \code{rmi.test} default is used for
+  raw data and all levels are retained from an existing result.}
   \item{scale}{For \code{build_rmi_violation_df}: \code{"auto"} (the
     probability scale if the fit is Bayesian, otherwise time),
     \code{"probability"}, or \code{"time"}.}
+  \item{by_block}{Passed to \code{\link{rmi.test}} when \code{x} is raw
+    trial data: estimate the quantiles per participant and block rather than
+    per participant.}
+  \item{qtype}{Plotting-position rule passed to \code{\link{rmi.test}} when
+    \code{x} is raw trial data; the default 5 is Equation 2 of Ulrich, Miller
+    and Schroeter (2007).}
+  \item{cdf_method, kernel_bw}{CDF estimator and kernel bandwidth passed to
+    \code{\link{rmi.test}} when \code{x} is raw trial data.}
 }
 \details{
   All three return a long data frame ready for \code{ggplot2}, following the

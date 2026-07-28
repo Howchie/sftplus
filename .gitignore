@@ -2,3 +2,7 @@
 *.swp
 .Rtmp*
 sftbayes/
+tmp/*
+..Rcheck/*
+/..Rcheck*
+/.Rtmp*

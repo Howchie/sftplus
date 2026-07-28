@@ -6,18 +6,38 @@
 #
 #   F_AB(t) <= F_A(t) + F_B(t)   for all t,
 #
-# under *any* separate-activation (race) account: the channels may be dependent
-# in an arbitrary way and no capacity assumption is made.  The Grice bound
-# F_AB(t) >= max(F_A(t), F_B(t)) is the corresponding lower limit.  Both are the
-# two-channel OR case of estimate.bounds(); see R/estimate.bounds.R, which this
-# file defers to for the bound curves used by the frequentist test.
+# under any separate-activation (race) account.  Two assumptions are worth
+# separating, because they are routinely confused (Miller, 2016).  Stochastic
+# independence of the two channels' finishing times is *not* required: the
+# channels may be correlated in an arbitrary way, which is exactly why only a
+# bound, and not a point prediction, is available.  Context independence -- that
+# each channel's finishing-time distribution is the same on redundant trials as
+# on single-target trials -- *is* required, and Miller (2016) argues it is not a
+# separate side condition but an inherent part of Raab's (1962) statistical
+# facilitation account.  A model in which the channels run at different speeds
+# when the other signal is present is therefore not a race model that happens to
+# violate an auxiliary assumption; it is a species of coactivation, since both
+# signals influence the response on a single trial.  This is what licenses the
+# usual reading of a violation: RMI violations justify concluding coactivation.
+# It also means the design must minimise the opportunity for context dependence
+# -- mixed rather than blocked presentation of the stimulus conditions.
+#
+# The Grice bound F_AB(t) >= max(F_A(t), F_B(t)) is the corresponding lower
+# limit.  Both are the two-channel OR case of the bounds in
+# R/estimate.bounds.R, but this file estimates them from its own cumulative
+# frequency polygons (see .sft_rmi_cdf below) rather than calling
+# estimate.bounds(), so that the bound and the redundant-target quantile it is
+# compared against come from one estimator with one tie rule.
 #
 # This is a different hypothesis from the UCIP capacity coefficient.  C_OR(t) > 1
 # is violation of one *specific* model -- independent, unlimited-capacity
-# parallel processing -- whereas Miller's bound holds for every race model
-# regardless of dependence or capacity.  Super capacity therefore does not imply
-# a Miller violation, and a limited-capacity race violates UCIP while satisfying
-# Miller.  Nothing in this file reuses the UCIP score.
+# parallel processing -- whereas Miller's bound holds for every context-
+# independent race model regardless of stochastic dependence.  Super capacity
+# therefore does not imply a Miller violation, and a race whose channels are
+# slowed by load violates UCIP while satisfying Miller -- though note that under
+# Miller (2016) such slowing is itself context dependence, so the two hypotheses
+# partition the model space differently rather than nesting.  Nothing in this
+# file reuses the UCIP score.
 #
 # The estimand is on the probability scale.  For participant i and percentile
 # level u_k,
@@ -72,6 +92,115 @@
 }
 
 
+# ---- Per-block quantile estimation -----------------------------------------
+#
+# Miller (1982) estimated the quantiles separately within each participant x
+# block and averaged over blocks.  That matters when overall speed drifts across
+# the session: pooling a fast late block with a slow early block spreads the
+# pooled distribution by the between-block shift, which flattens the CDFs of all
+# three cells and moves the bound.  Averaging within-block quantiles instead
+# estimates the block-average distribution, with the drift absorbed block by
+# block.  It is the same argument that makes the estimand within-participant,
+# applied one level down.
+#
+# Every scorer below therefore takes a *list of blocks* for one participant --
+# each block a list(RT, CR) holding the AB / A / B cells -- and reduces over
+# blocks by averaging.  With `by_block = FALSE` a participant has exactly one
+# block covering the whole session, the reduction is the identity, and the
+# default path is numerically unchanged.
+#
+# Because blocks are disjoint sets of trials they are independent, so the
+# sampling covariance of the block-averaged delta is the sum of the per-block
+# covariances divided by the squared number of blocks.  `min_n` applies per
+# (participant, block, cell): a block short of it is dropped, and a participant
+# with no surviving block is dropped as before.
+
+
+.sft_rmi_block_levels <- function(x) {
+  if (is.factor(x)) return(as.character(levels(droplevels(x))))
+  as.character(sort(unique(x)))
+}
+
+
+# Condition-split input as .sft_condition_input() returns it, with an added
+# `blocks` element: one list of per-block RT/CR cell lists per participant.
+.sft_rmi_input <- function(inData, CR = NULL, Condition = NULL, Subject = NULL,
+                           by_block = FALSE) {
+  grouped <- .sft_condition_input(inData, CR, "OR", Condition, Subject)
+  grouped$by_block <- isTRUE(by_block)
+  if (!isTRUE(by_block)) return(grouped)
+  if (!is.data.frame(inData)) {
+    stop("by_block = TRUE needs a trial-level data frame; the pre-split RT/CR ",
+         "list input carries no block index.", call. = FALSE)
+  }
+  data <- .sft_normalize_columns(inData)
+  if (!"Block" %in% names(data)) {
+    stop("by_block = TRUE needs a Block column in inData.", call. = FALSE)
+  }
+  if (anyNA(data$Block)) {
+    stop("Block must not contain missing values.", call. = FALSE)
+  }
+  block <- as.character(data$Block)
+  block_levels <- .sft_rmi_block_levels(data$Block)
+  has_condition <- "Condition" %in% names(data)
+  condition <- if (has_condition) as.character(data$Condition) else
+    rep("default", nrow(data))
+  subject <- as.character(data$Subject)
+
+  conditions <- lapply(grouped$levels, function(level) {
+    input <- grouped$conditions[[level]]
+    blocks <- stats::setNames(vector("list", length(input$subject)),
+                              input$subject)
+    labels <- blocks
+    for (b in block_levels) {
+      rows <- block == b & condition == level
+      if (!any(rows)) next
+      present <- intersect(input$subject, unique(subject[rows]))
+      if (!length(present)) next
+      # A block with no usable channel cell for the selected participants is
+      # simply not a block of this analysis.
+      converted <- tryCatch(
+        sft_data_to_rt(data[rows, , drop = FALSE],
+                       Condition = if (has_condition) level else NULL,
+                       Subject = present, stopping.rule = "OR",
+                       by_subject = "always"),
+        error = function(e) NULL)
+      if (is.null(converted)) next
+      for (id in present) {
+        blocks[[id]] <- c(blocks[[id]], list(list(RT = converted$RT[[id]],
+                                                  CR = converted$CR[[id]])))
+        labels[[id]] <- c(labels[[id]], b)
+      }
+    }
+    input$blocks <- unname(blocks)
+    input$block_names <- unname(labels)
+    input
+  })
+  names(conditions) <- grouped$levels
+  grouped$conditions <- conditions
+  grouped$block_levels <- block_levels
+  grouped
+}
+
+
+# One participant's blocks.  Inputs that never went through .sft_rmi_input()
+# (the list path, and direct internal callers) are treated as one block.
+.sft_rmi_subject_blocks <- function(input, i) {
+  if (!is.null(input$blocks)) return(input$blocks[[i]])
+  list(list(RT = input$RT[[i]], CR = input$CR[[i]]))
+}
+
+
+# Average a per-block field across blocks, keeping the percentile index.  Levels
+# no block could estimate stay NA rather than becoming NaN.
+.sft_rmi_block_mean <- function(per, field, k, na.rm = FALSE) {
+  m <- matrix(unlist(lapply(per, `[[`, field)), nrow = k)
+  out <- rowMeans(m, na.rm = na.rm)
+  out[!is.finite(out)] <- NA_real_
+  out
+}
+
+
 # Response times per cell, sorted.
 #
 # errors = "discard" keeps correct trials only.  This matches the treatment in
@@ -108,9 +237,220 @@
 }
 
 
+# Cells for each of one participant's blocks, keeping the blocks that carry
+# enough correct trials in every cell and admit an estimable percentile grid.
+# min_n counts observed responses: under errors = "defective" the Inf
+# placeholders inflate the cell size without adding information about shape.
+.sft_rmi_usable_blocks <- function(blocks, probs, min_n, errors = "discard",
+                                   grid = TRUE) {
+  cells <- lapply(blocks, function(b) {
+    .sft_rmi_cells(b$RT, b$CR, errors = errors)
+  })
+  observed <- lapply(cells, function(cl) {
+    vapply(cl, function(v) sum(is.finite(v)), integer(1))
+  })
+  ok <- vapply(seq_along(cells), function(j) {
+    all(observed[[j]] >= min_n) &&
+      (!grid || !anyNA(.sft_rmi_grid(cells[[j]], probs)))
+  }, logical(1))
+  # The reported cell counts are the trials that entered the estimate, so they
+  # cover the surviving blocks; with none surviving they describe what was
+  # available, which is what the drop message is about.
+  n <- Reduce(`+`, lapply(cells[if (any(ok)) ok else TRUE], lengths))
+  # Quantiles are estimated within block, so the estimable percentile range is
+  # governed by the smallest cell of a surviving block, not by the pooled count.
+  n_min <- if (any(ok)) min(unlist(observed[ok])) else NA_integer_
+  # The probability-scale grid is read off the *pooled* single-target RTs, so
+  # its estimable range is governed by n_A + n_B rather than by the worst cell.
+  n_pool <- if (any(ok)) {
+    min(vapply(observed[ok], function(v) v[["A"]] + v[["B"]], integer(1)))
+  } else NA_integer_
+  list(cells = cells[ok], n = n, n_blocks = sum(ok), n_min = n_min,
+       n_pool = n_pool)
+}
+
+
 .sft_rmi_ecdf_at <- function(x, times) {
   if (!length(x)) return(rep(NA_real_, length(times)))
   colMeans(outer(x, times, "<="))
+}
+
+
+# ---- The Ulrich-Miller-Schroeter cumulative frequency polygon ---------------
+#
+# By default, everything on the *time* scale -- the reported cell quantiles, the
+# bound curve, and the bound quantiles compared against them -- is estimated
+# with the algorithm of Ulrich, Miller and Schroeter (2007), so that rmi.test()
+# reproduces the published procedure exactly. The optional kernel path applies
+# one Gaussian kernel-CDF estimator symmetrically to all of those quantities.
+# (The probability-scale estimand used by rmiGroup.bayes() is a different
+# quantity and uses the plain empirical CDF above; see the header.)
+#
+# Their Equation 2 is a cumulative frequency polygon rather than a step
+# function: the ith of n ordered RTs is placed at (i - .5)/n and adjacent points
+# are joined by a straight line.  UMS are explicit that the step function is not
+# an acceptable substitute for percentile estimation.  `qtype` generalises the
+# plotting-position rule to the others offered by stats::quantile(); qtype = 5
+# is Equation 2 itself.
+#
+# Their Appendix A gives the correction for ties: RT is recorded to the nearest millisecond, so ties "could occur in
+# any real data set".  A value repeated n_i times is a single vertical jump of
+# the step function, from s_{i-1}/n to s_i/n, and the polygon must pass through
+# that jump's *midpoint*, (s_{i-1} + s_i)/(2n) -- not its top, and not a flat
+# plateau spanning the tied probabilities.  The midpoint is the arithmetic mean
+# of the plotting positions of the tied observations, so averaging within a tied
+# group implements Appendix A for any rule and collapses to the untied case when
+# n_i = 1.  Both of the estimators previously used here got this wrong in
+# opposite directions -- stats::quantile() produces the plateau and the
+# quantile-rule CDF in estimate.bounds() took the top of the jump -- which
+# biased the redundant-target quantile and the bound quantile against each
+# other by up to a millisecond on the worked example of UMS Table 1.
+.sft_rmi_positions <- function(x, qtype = 5) {
+  x <- sort(as.numeric(x[is.finite(x)]))
+  n <- length(x)
+  if (!n) return(NULL)
+  i <- seq_len(n)
+  p <- switch(as.character(qtype),
+              "1" = i / n,
+              "2" = i / n,
+              "3" = (i - 0.5) / n,
+              "4" = i / n,
+              "5" = (i - 0.5) / n,
+              "6" = i / (n + 1),
+              "7" = if (n > 1L) (i - 1) / (n - 1) else 1,
+              "8" = (i - 1 / 3) / (n + 1 / 3),
+              "9" = (i - 3 / 8) / (n + 0.25),
+              stop("qtype must be an integer between 1 and 9.", call. = FALSE))
+  ux <- unique(x)
+  # x is sorted, so tied observations are contiguous and the group means are a
+  # difference of cumulative sums.
+  counts <- tabulate(match(x, ux), length(ux))
+  upper <- cumsum(counts)
+  lower <- c(0L, upper[-length(upper)])
+  cp <- c(0, cumsum(p))
+  list(x = ux, p = (cp[upper + 1L] - cp[lower + 1L]) / counts, n = n)
+}
+
+
+# The polygon itself.  Below the smallest observation UMS set G to zero, so the
+# polygon carries a discontinuity there; that is what makes probabilities below
+# the first plotting position inestimable rather than silently extrapolated.
+.sft_rmi_cdf <- function(x, qtype = 5) {
+  pos <- .sft_rmi_positions(x, qtype)
+  if (is.null(pos)) return(function(t) rep(NA_real_, length(t)))
+  function(t) {
+    out <- numeric(length(t))
+    out[t >= pos$x[[length(pos$x)]]] <- 1
+    mid <- t >= pos$x[[1L]] & t < pos$x[[length(pos$x)]]
+    if (any(mid)) {
+      out[mid] <- if (length(pos$x) == 1L) pos$p else
+        stats::approx(pos$x, pos$p, xout = t[mid])$y
+    }
+    out
+  }
+}
+
+
+# Percentiles by inverting the polygon.  UMS note that there is no satisfactory
+# estimate of a percentile below p = 1/(2n) or above p = (2n - 1)/(2n), since
+# either would require extrapolating past the observed data; for qtype = 5 those
+# limits are precisely the first and last plotting positions, so returning NA
+# outside the polygon's range enforces the rule exactly rather than clamping to
+# the sample minimum or maximum the way stats::quantile() does.
+.sft_rmi_quantile <- function(x, probs, qtype = 5) {
+  pos <- .sft_rmi_positions(x, qtype)
+  if (is.null(pos) || length(pos$x) < 2L) return(rep(NA_real_, length(probs)))
+  stats::approx(pos$p, pos$x, xout = probs, ties = "ordered")$y
+}
+
+
+# Invert an exact kernel CDF (or an algebraic bound made from kernel CDFs).
+.sft_rmi_kernel_invert <- function(cdf, probs, lower, upper) {
+  vapply(probs, function(p) {
+    at_ends <- c(cdf(lower), cdf(upper))
+    if (any(!is.finite(at_ends)) || at_ends[1L] > p || at_ends[2L] < p) {
+      return(NA_real_)
+    }
+    stats::uniroot(function(t) cdf(t) - p, lower = lower, upper = upper,
+                   tol = .Machine$double.eps^0.5)$root
+  }, numeric(1))
+}
+
+
+# Symmetric in the statistical-procedure sense: every observed condition and
+# every channel entering the bound uses the same Gaussian kernel-CDF estimator
+# and bandwidth-selection rule.
+.sft_rmi_kernel_estimates <- function(cells, probs, bound,
+                                      kernel_bw = "nrd0") {
+  cdfs <- lapply(cells[c("AB", "A", "B")], .make_kernel_cdf, bw = kernel_bw)
+  lower <- min(vapply(cdfs, function(f) exp(log(attr(f, "range")[1L]) - 8 * attr(f, "bw")), numeric(1)))
+  upper <- max(vapply(cdfs, function(f) exp(log(attr(f, "range")[2L]) + 8 * attr(f, "bw")), numeric(1)))
+  bound_cdf <- if (bound == "miller") {
+    function(t) cdfs$A(t) + cdfs$B(t)
+  } else {
+    function(t) pmax(cdfs$A(t), cdfs$B(t))
+  }
+  list(q_AB = .sft_rmi_kernel_invert(cdfs$AB, probs, lower, upper),
+       q_A = .sft_rmi_kernel_invert(cdfs$A, probs, lower, upper),
+       q_B = .sft_rmi_kernel_invert(cdfs$B, probs, lower, upper),
+       q_bound = .sft_rmi_kernel_invert(bound_cdf, probs, lower, upper))
+}
+
+
+# The bound curve B(t) = G_A(t) + G_B(t) (Miller) or max(G_A, G_B) (Grice).
+# For polygons, B is piecewise linear between their knots, so the knot union is
+# exact and grid-free; points just below the cell minima preserve their jumps
+# from zero. For kernel CDFs this helper returns a dense display grid. The RMI
+# quantiles themselves use direct root finding in .sft_rmi_kernel_estimates().
+.sft_rmi_bound_curve <- function(cells, bound, qtype = 5,
+                                 cdf_method = c("polygon", "kernel"),
+                                 kernel_bw = "nrd0") {
+  cdf_method <- match.arg(cdf_method)
+  a <- cells$A[is.finite(cells$A)]
+  b <- cells$B[is.finite(cells$B)]
+  if (length(a) < 2L || length(b) < 2L) return(NULL)
+  if (cdf_method == "kernel") {
+    cdf_a <- .make_kernel_cdf(a, bw = kernel_bw)
+    cdf_b <- .make_kernel_cdf(b, bw = kernel_bw)
+    lower <- min(exp(log(min(a)) - 8 * attr(cdf_a, "bw")),
+                 exp(log(min(b)) - 8 * attr(cdf_b, "bw")))
+    upper <- max(exp(log(max(a)) + 8 * attr(cdf_a, "bw")),
+                 exp(log(max(b)) + 8 * attr(cdf_b, "bw")))
+    grid <- seq(lower, upper, length.out = 4096L)
+    g_a <- cdf_a(grid)
+    g_b <- cdf_b(grid)
+  } else {
+    knots <- sort(unique(c(a, b)))
+    eps <- max(diff(range(knots)) * 1e-9, 1e-9)
+    grid <- sort(unique(c(knots, min(a) - eps, min(b) - eps)))
+    g_a <- .sft_rmi_cdf(a, qtype)(grid)
+    g_b <- .sft_rmi_cdf(b, qtype)(grid)
+  }
+  list(grid = grid, value = if (bound == "miller") g_a + g_b else pmax(g_a, g_b))
+}
+
+
+# Percentile levels at which at least one cell of at least one participant falls
+# outside the UMS estimable range.  Reported once by the caller rather than per
+# participant, which would be unreadable.
+.sft_rmi_inestimable <- function(probs, n_min) {
+  n_min <- n_min[is.finite(n_min) & n_min > 0]
+  if (!length(n_min)) return(numeric(0))
+  n <- min(n_min)
+  probs[probs < 1 / (2 * n) | probs > (2 * n - 1) / (2 * n)]
+}
+
+
+.sft_rmi_warn_inestimable <- function(probs, n_min) {
+  bad <- .sft_rmi_inestimable(probs, n_min)
+  if (!length(bad)) return(invisible(NULL))
+  warning("Percentile level(s) ", paste(format(bad), collapse = ", "),
+          " lie outside the estimable range 1/(2n) to (2n-1)/(2n) for at ",
+          "least one participant and cell (smallest cell n = ",
+          min(n_min[is.finite(n_min) & n_min > 0]), "); Ulrich, Miller & ",
+          "Schroeter (2007) note there is no satisfactory estimate there. ",
+          "They are reported as NA.", call. = FALSE)
+  invisible(NULL)
 }
 
 
@@ -186,17 +526,23 @@
 # is itself a statistic of the participant's data, so holding it fixed would
 # understate uncertainty.  Because the estimand is indexed by the percentile
 # level rather than by time, replicates remain comparable across a moving grid.
-.sft_rmi_boot_cov <- function(cells, probs, bound, n_boot) {
+# `blocks` is the participant's list of per-block cell lists; resampling within
+# block and re-averaging keeps the resampling scheme matched to the estimator.
+.sft_rmi_boot_cov <- function(blocks, probs, bound, n_boot) {
   k <- length(probs)
   reps <- matrix(NA_real_, nrow = n_boot, ncol = k)
   for (b in seq_len(n_boot)) {
-    resampled <- lapply(cells, function(v) {
-      if (length(v) < 2L) return(v)
-      sort(v[sample.int(length(v), replace = TRUE)])
+    per <- lapply(blocks, function(cells) {
+      resampled <- lapply(cells, function(v) {
+        if (length(v) < 2L) return(v)
+        sort(v[sample.int(length(v), replace = TRUE)])
+      })
+      times <- .sft_rmi_grid(resampled, probs)
+      if (anyNA(times)) return(NULL)
+      list(delta = .sft_rmi_delta_at(resampled, times, bound)$delta)
     })
-    times <- .sft_rmi_grid(resampled, probs)
-    if (anyNA(times)) next
-    reps[b, ] <- .sft_rmi_delta_at(resampled, times, bound)$delta
+    if (any(vapply(per, is.null, logical(1)))) next
+    reps[b, ] <- .sft_rmi_block_mean(per, "delta", k)
   }
   complete <- stats::complete.cases(reps)
   if (sum(complete) < max(10L, k + 1L)) return(matrix(NA_real_, k, k))
@@ -213,45 +559,61 @@
 # reason.  Dropped points are recorded per participant rather than removed from
 # the shared percentile index, so participants with different informative ranges
 # still contribute to the common population curve.
-.sft_rmi_subject_score <- function(rt, cr, probs, bound,
+#
+# With several blocks the reported delta, times, and cell CDFs are averages over
+# the blocks that survive `min_n`, and the covariance is the covariance of that
+# average.  A grid point is kept only where the average is estimable in every
+# surviving block.
+.sft_rmi_subject_score <- function(blocks, probs, bound,
                                    var_method = "analytic", n_boot = 2000L,
-                                   min_n = 5L, errors = "discard") {
+                                   min_n = 20L, errors = "discard") {
   k <- length(probs)
   empty <- list(delta = rep(NA_real_, k), cov = matrix(NA_real_, k, k),
                 keep = rep(FALSE, k), times = rep(NA_real_, k),
                 F_AB = rep(NA_real_, k), F_A = rep(NA_real_, k),
                 F_B = rep(NA_real_, k), bound_value = rep(NA_real_, k),
-                n = c(AB = 0L, A = 0L, B = 0L), ok = FALSE, near_crossing = FALSE)
-  cells <- .sft_rmi_cells(rt, cr, errors = errors)
-  n <- lengths(cells)
-  # min_n counts observed responses: under errors = "defective" the Inf
-  # placeholders inflate the cell size without adding information about shape.
-  n_correct <- vapply(cells, function(v) sum(is.finite(v)), integer(1))
-  if (any(n_correct < min_n)) {
-    empty$n <- n
-    return(empty)
-  }
-  times <- .sft_rmi_grid(cells, probs)
-  if (anyNA(times)) {
-    empty$n <- n
-    return(empty)
-  }
-  at <- .sft_rmi_delta_at(cells, times, bound)
+                n = c(AB = 0L, A = 0L, B = 0L), n_blocks = 0L,
+                n_pool = NA_integer_, ok = FALSE, near_crossing = FALSE)
+  usable <- .sft_rmi_usable_blocks(blocks, probs, min_n, errors = errors)
+  empty$n <- usable$n
+  if (!usable$n_blocks) return(empty)
+
+  cells <- usable$cells
+  n_blocks <- usable$n_blocks
+  per <- lapply(cells, function(cl) {
+    times <- .sft_rmi_grid(cl, probs)
+    c(.sft_rmi_delta_at(cl, times, bound), list(times = times))
+  })
+  delta <- .sft_rmi_block_mean(per, "delta", k)
+  bound_value <- .sft_rmi_block_mean(per, "bound", k)
   covariance <- if (var_method == "bootstrap") {
     .sft_rmi_boot_cov(cells, probs, bound, n_boot)
   } else {
-    .sft_rmi_analytic_cov(cells, times, bound)
+    # Blocks are disjoint sets of trials, so Var(mean of B block deltas) is the
+    # sum of the block covariances over B^2.
+    Reduce(`+`, lapply(seq_len(n_blocks), function(j) {
+      .sft_rmi_analytic_cov(cells[[j]], per[[j]]$times, bound)
+    })) / n_blocks^2
   }
   variance <- if (all(is.na(covariance))) rep(NA_real_, k) else diag(covariance)
-  keep <- is.finite(at$delta) & is.finite(variance) & variance > 0
-  if (bound == "miller") keep <- keep & at$bound < 1
+  keep <- is.finite(delta) & is.finite(variance) & variance > 0
+  if (bound == "miller") keep <- keep & bound_value < 1
   # max(F_A, F_B) is non-smooth where the channel CDFs cross; flag it so the
   # caller can recommend the bootstrap covariance.
-  near_crossing <- bound == "grice" && any(keep &
-    abs(at$F_A - at$F_B) < 1 / max(n[["A"]], n[["B"]]))
-  list(delta = at$delta, cov = covariance, keep = keep, times = times,
-       F_AB = at$F_AB, F_A = at$F_A, F_B = at$F_B, bound_value = at$bound,
-       n = n, ok = sum(keep) >= 2L, near_crossing = near_crossing)
+  near_crossing <- bound == "grice" &&
+    any(vapply(seq_len(n_blocks), function(j) {
+      n_j <- lengths(cells[[j]])
+      any(keep & abs(per[[j]]$F_A - per[[j]]$F_B) <
+            1 / max(n_j[["A"]], n_j[["B"]]))
+    }, logical(1)))
+  list(delta = delta, cov = covariance, keep = keep,
+       times = .sft_rmi_block_mean(per, "times", k),
+       F_AB = .sft_rmi_block_mean(per, "F_AB", k),
+       F_A = .sft_rmi_block_mean(per, "F_A", k),
+       F_B = .sft_rmi_block_mean(per, "F_B", k),
+       bound_value = bound_value, n = usable$n, n_blocks = n_blocks,
+       n_pool = usable$n_pool, ok = sum(keep) >= 2L,
+       near_crossing = near_crossing)
 }
 
 
@@ -260,12 +622,12 @@
 # effect_hat and one precision per participant, Y carries one delta vector per
 # participant and S the matching sampling covariance.
 .sft_rmi_score_data <- function(input, probs, bound, var_method = "analytic",
-                                n_boot = 2000L, min_n = 5L,
+                                n_boot = 2000L, min_n = 20L,
                                 errors = "discard") {
   var_method <- .sft_var_method(var_method)
   subject <- input$subject
-  scores <- lapply(seq_along(input$RT), function(i) {
-    .sft_rmi_subject_score(input$RT[[i]], input$CR[[i]], probs, bound,
+  scores <- lapply(seq_along(subject), function(i) {
+    .sft_rmi_subject_score(.sft_rmi_subject_blocks(input, i), probs, bound,
                            var_method = var_method, n_boot = n_boot,
                            min_n = min_n, errors = errors)
   })
@@ -283,6 +645,9 @@
     scores <- scores[ok]
     subject <- subject[ok]
   }
+  .sft_rmi_warn_inestimable(probs,
+                            vapply(scores, function(s) as.numeric(s$n_pool),
+                                   numeric(1)))
   if (var_method == "analytic" && any(vapply(scores, `[[`, logical(1),
                                             "near_crossing"))) {
     warning("The channel CDFs cross within the tested range, where max(F_A, F_B) ",
@@ -301,14 +666,15 @@
                delta = s$delta,
                se = sqrt(ifelse(rep(all(is.na(s$cov)), length(probs)),
                                 NA_real_, diag(s$cov))),
-               used = s$keep, stringsAsFactors = FALSE)
+               used = s$keep, n_blocks = s$n_blocks, stringsAsFactors = FALSE)
   }))
   rownames(score_df) <- NULL
   cell_n <- do.call(rbind, lapply(scores, `[[`, "n"))
 
   list(subject = subject, Y = y, S = covariances, keep = keep, probs = probs,
        bound = bound, effect_name = "delta", var_method = var_method,
-       score = score_df, n = cell_n)
+       score = score_df, n = cell_n,
+       n_blocks = vapply(scores, `[[`, integer(1), "n_blocks"))
 }
 
 
@@ -337,59 +703,91 @@
 
 
 #
-# `qtype` selects the plotting positions used for the observed quantiles.  The
-# package default (type = 8) is used elsewhere; type = 5 places the ith of n
-# ordered RTs at (i - .5) / n, which is the convention Miller (1982) used and is
-# provided so that a figure can reproduce his exactly.  It affects the reported
-# quantiles only, never the probability-scale estimand tested by
-# rmiGroup.bayes(): the bound quantile is obtained by inverting the bound curve
-# from estimate.bounds() rather than by a quantile rule.
-.sft_rmi_time_subject <- function(rt, cr, probs, bound, min_n = 5L, qtype = 8) {
+# Under cdf_method = "polygon", `qtype` selects the plotting-position rule used
+# for both the observed quantiles and the bound; see .sft_rmi_positions(). The
+# default 5 is Equation 2 of Ulrich, Miller & Schroeter (2007), with ties
+# handled by their Appendix A. Under cdf_method = "kernel", qtype is irrelevant:
+# A, B, AB, and the bound all use exact Gaussian kernel CDFs.
+#
+# With several blocks each quantile is estimated within block and averaged over
+# blocks, as Miller (1982) did, and the difference is then taken between the
+# averaged quantiles.  A percentile the bound never reaches in a given block
+# contributes nothing there, so q_bound averages over the blocks that reach it.
+.sft_rmi_time_subject <- function(blocks, probs, bound, min_n = 20L, qtype = 5,
+                                  cdf_method = c("polygon", "kernel"),
+                                  kernel_bw = "nrd0") {
+  cdf_method <- match.arg(cdf_method)
   k <- length(probs)
   empty <- list(diff = rep(NA_real_, k), relative = rep(NA_real_, k),
                 q_AB = rep(NA_real_, k), q_A = rep(NA_real_, k),
                 q_B = rep(NA_real_, k), q_bound = rep(NA_real_, k),
                 mean_rt = NA_real_, n = c(AB = 0L, A = 0L, B = 0L),
-                ok = FALSE)
-  cells <- .sft_rmi_cells(rt, cr)
-  if (any(lengths(cells) < min_n)) return(empty)
-  # The bound curve itself comes from estimate.bounds(), so the frequentist and
-  # Bayesian routes cannot drift apart in how the bound is defined.
-  bounds <- estimate.bounds(RT = list(cells$A, cells$B), stopping.rule = "OR")
-  grid <- sort(unique(c(cells$A, cells$B)))
-  curve <- if (bound == "miller") bounds$Upper.Bound(grid) else
-    bounds$Lower.Bound(grid)
-  q_bound <- .sft_rmi_invert(grid, curve, probs)
-  quantile_of <- function(x) as.numeric(stats::quantile(x, probs = probs,
-                                                        names = FALSE,
-                                                        type = qtype))
-  q_ab <- quantile_of(cells$AB)
-  mean_rt <- mean(c(cells$AB, cells$A, cells$B))
+                n_blocks = 0L, n_min = NA_integer_, ok = FALSE)
+  usable <- .sft_rmi_usable_blocks(blocks, probs, min_n, grid = FALSE)
+  empty$n <- usable$n
+  if (!usable$n_blocks) return(empty)
+
+  per <- lapply(usable$cells, function(cells) {
+    estimates <- if (cdf_method == "kernel") {
+      .sft_rmi_kernel_estimates(cells, probs, bound, kernel_bw = kernel_bw)
+    } else {
+      quantile_of <- function(x) .sft_rmi_quantile(x, probs, qtype = qtype)
+      curve <- .sft_rmi_bound_curve(cells, bound, qtype = qtype)
+      list(q_bound = if (is.null(curve)) rep(NA_real_, k) else
+             .sft_rmi_invert(curve$grid, curve$value, probs),
+           q_AB = quantile_of(cells$AB), q_A = quantile_of(cells$A),
+           q_B = quantile_of(cells$B))
+    }
+    c(estimates, list(rt = c(cells$AB, cells$A, cells$B)))
+  })
+  q_bound <- .sft_rmi_block_mean(per, "q_bound", k, na.rm = TRUE)
+  q_ab <- .sft_rmi_block_mean(per, "q_AB", k, na.rm = TRUE)
+  mean_rt <- mean(unlist(lapply(per, `[[`, "rt")))
   difference <- if (bound == "miller") q_ab - q_bound else q_bound - q_ab
   ok <- is.finite(mean_rt) && mean_rt > 0 && sum(is.finite(difference)) >= 2L
   list(diff = difference,
        relative = if (isTRUE(ok)) difference / mean_rt else rep(NA_real_, k),
-       q_AB = q_ab, q_A = quantile_of(cells$A), q_B = quantile_of(cells$B),
-       q_bound = q_bound, mean_rt = mean_rt, n = lengths(cells), ok = ok)
+       q_AB = q_ab, q_A = .sft_rmi_block_mean(per, "q_A", k, na.rm = TRUE),
+       q_B = .sft_rmi_block_mean(per, "q_B", k, na.rm = TRUE),
+       q_bound = q_bound, mean_rt = mean_rt, n = usable$n,
+       n_blocks = usable$n_blocks, n_min = usable$n_min, ok = ok)
 }
 
 
-.sft_rmi_time_table <- function(input, probs, bound, min_n = 5L, qtype = 8) {
-  parts <- lapply(seq_along(input$RT), function(i) {
-    .sft_rmi_time_subject(input$RT[[i]], input$CR[[i]], probs, bound,
-                          min_n = min_n, qtype = qtype)
+.sft_rmi_time_table <- function(input, probs, bound, min_n = 20L, qtype = 5,
+                                cdf_method = c("polygon", "kernel"),
+                                kernel_bw = "nrd0") {
+  cdf_method <- match.arg(cdf_method)
+  parts <- lapply(seq_along(input$subject), function(i) {
+    .sft_rmi_time_subject(.sft_rmi_subject_blocks(input, i), probs, bound,
+                          min_n = min_n, qtype = qtype,
+                          cdf_method = cdf_method, kernel_bw = kernel_bw)
   })
   ok <- vapply(parts, `[[`, logical(1), "ok")
   if (!any(ok)) return(NULL)
+  # Raising min_n to the 20 that Ulrich et al. and Kiesel et al. recommend
+  # excludes participants that a smaller threshold would have admitted, so say
+  # which ones rather than shrinking the table quietly.
+  if (!all(ok)) {
+    warning("Dropping ", sum(!ok), " participant(s) without an estimable ",
+            bound, "-bound quantile table: ",
+            paste(input$subject[!ok], collapse = ", "),
+            ". Each participant needs at least min_n = ", min_n,
+            " correct trials in each of the AB, A, and B cells.",
+            call. = FALSE)
+  }
   subject <- input$subject[ok]
   parts <- parts[ok]
+  .sft_rmi_warn_inestimable(probs,
+                            vapply(parts, function(p) as.numeric(p$n_min),
+                                   numeric(1)))
   long <- do.call(rbind, lapply(seq_along(parts), function(i) {
     p <- parts[[i]]
     data.frame(subject = subject[[i]], prob = probs, q_A = p$q_A, q_B = p$q_B,
                q_AB = p$q_AB, q_bound = p$q_bound, difference = p$diff,
                relative = p$relative, mean_RT = p$mean_rt,
                n_AB = p$n[["AB"]], n_A = p$n[["A"]], n_B = p$n[["B"]],
-               stringsAsFactors = FALSE)
+               n_blocks = p$n_blocks, stringsAsFactors = FALSE)
   }))
   rownames(long) <- NULL
   summarise <- function(values) {
@@ -412,6 +810,7 @@
   # display convention, not the estimand: the group mean of a millisecond
   # quantile is base-time dependent, which is exactly why the tested quantity is
   # the within-participant probability-scale delta.
+  #
   vincentized <- function(column) {
     vapply(seq_along(probs), function(k) {
       x <- long[[column]][long$prob == probs[[k]]]
@@ -446,17 +845,46 @@
 #'   \code{Condition}, or a pre-split RT/CR list.
 #' @param bound \code{"miller"} (upper bound, the race model inequality),
 #'   \code{"grice"} (lower bound), or \code{"both"}.
-#' @param probs percentile levels to test.
+#' @param probs percentile levels to test.  The default is the 10\%-25\% range
+#'   recommended by Kiesel, Miller and Ulrich (2007): testing the whole
+#'   distribution accumulates Type I error to roughly 13\%, percentiles above
+#'   the median are vacuous for the Miller bound, and 10\%-25\% is where
+#'   violations are in practice found, so restricting the range costs little
+#'   power.  Widen it deliberately, not by habit.
 #' @param p.adjust.method multiplicity adjustment passed to
 #'   \code{\link[stats]{p.adjust}}; the default \code{"holm"} is applied because
-#'   the classical procedure applies none.
+#'   the classical procedure applies none.  Kiesel et al. note that
+#'   Bonferroni-type corrections are conservative here, because the tests at
+#'   adjacent percentiles correlate .77 to .95, and prefer range restriction as
+#'   the primary control; \code{p.adjust.method = "none"} recovers their
+#'   procedure once \code{probs} is restricted.
 #' @param Condition,Subject optional selectors.
-#' @param min_n minimum correct trials required per cell.
-#' @param qtype plotting-position rule for the reported quantiles, passed to
-#'   \code{\link[stats]{quantile}}.  The default 8 matches the rest of the
-#'   package; \code{qtype = 5} places the ith of n ordered RTs at
-#'   \eqn{(i - .5)/n}, the convention Miller (1982) used, and reproduces his
-#'   figures exactly.
+#' @param min_n minimum correct trials required per cell; with
+#'   \code{by_block = TRUE} it applies per participant, block, and cell.  The
+#'   default of 10 is the sample size Ulrich et al. and Kiesel et al. recommend
+#'   if, as in Miller (1982), there are at least 2 blocks per subject;
+#'   below it the systematic bias in percentile estimation is large enough to
+#'   produce spurious violations, and Kiesel et al. advise treating rejections
+#'   obtained with fewer than 20 trials in any cell with suspicion.
+#' @param by_block estimate the quantiles separately within each participant
+#'   \emph{and} block, using the \code{Block} column of \code{inData}, and
+#'   average over blocks, as Miller (1982) did.  \code{FALSE} (the default)
+#'   pools the whole session and estimates one set of quantiles per participant
+#'   (and condition).
+#' @param qtype plotting-position rule for the cumulative frequency polygon
+#'   from which both the reported quantiles and the bound are estimated.  The
+#'   default 5 places the ith of n ordered RTs at \eqn{(i - .5)/n}, which is
+#'   Equation 2 of Ulrich, Miller and Schroeter (2007) and the convention
+#'   Miller (1982) used; ties follow their Appendix A whatever the rule.
+#' @param cdf_method \code{"polygon"} (default) for the Ulrich et al.
+#'   cumulative-frequency polygon, or \code{"kernel"} for a fully symmetric
+#'   Gaussian kernel-CDF analysis. In the kernel analysis the A, B, and AB CDFs,
+#'   their quantiles, and the bound all use the same estimator; \code{qtype} is
+#'   then ignored.
+#' @param kernel_bw bandwidth selector or one positive bandwidth for
+#'   \code{cdf_method = "kernel"}. The default \code{"nrd0"} uses R's standard
+#'   rule independently in each cell. Other selectors accepted by
+#'   \code{\link[stats]{density}} may also be supplied.
 #' @return A list with one element per requested bound, each containing the
 #'   per-percentile \code{test} table, the per-participant \code{subject} table,
 #'   the quantile-averaged \code{quantiles} table used by
@@ -465,20 +893,37 @@
 #' @seealso \code{\link{rmiGroup.bayes}} for the hierarchical Bayesian analysis
 #'   on the probability scale, and \code{\link{build_rmi_bound_df}} for the
 #'   figure that accompanies this test.
+#' @references
+#' Miller, J. (1982). Divided attention: Evidence for coactivation with
+#' redundant signals. \emph{Cognitive Psychology}, 14, 247-279.
+#'
+#' Ulrich, R., Miller, J., & Schroeter, H. (2007). Testing the race model
+#' inequality: An algorithm and computer programs. \emph{Behavior Research
+#' Methods}, 39, 291-302.
+#'
+#' Kiesel, A., Miller, J., & Ulrich, R. (2007). Systematic biases and Type I
+#' error accumulation in tests of the race model inequality. \emph{Behavior
+#' Research Methods}, 39, 539-551.
 #' @export
 rmi.test <- function(inData, bound = c("miller", "grice", "both"),
-                     probs = seq(.05, .95, by = .05),
+                     probs = seq(.10, .25, by = .05),
                      p.adjust.method = "holm",
-                     Condition = NULL, Subject = NULL, min_n = 5L, qtype = 8) {
+                     Condition = NULL, Subject = NULL, min_n = 10L,
+                     by_block = FALSE, qtype = 5,
+                     cdf_method = c("polygon", "kernel"),
+                     kernel_bw = "nrd0") {
   bound <- .sft_rmi_bound(if (missing(bound)) "miller" else bound)
+  cdf_method <- match.arg(cdf_method)
   probs <- .sft_rmi_probs(probs)
-  grouped <- .sft_condition_input(inData, NULL, "OR", Condition, Subject)
+  grouped <- .sft_rmi_input(inData, NULL, Condition, Subject, by_block)
   bounds <- if (bound == "both") c("miller", "grice") else bound
 
   one_bound <- function(which_bound) {
     per_condition <- lapply(grouped$levels, function(level) {
       table <- .sft_rmi_time_table(grouped$conditions[[level]], probs,
-                                   which_bound, min_n = min_n, qtype = qtype)
+                                   which_bound, min_n = min_n, qtype = qtype,
+                                   cdf_method = cdf_method,
+                                   kernel_bw = kernel_bw)
       if (is.null(table)) return(NULL)
       values <- table$subject
       test <- do.call(rbind, lapply(probs, function(p) {
@@ -503,8 +948,11 @@ rmi.test <- function(inData, bound = c("miller", "grice", "both"),
       list(test = test, subject = table$subject,
            relative = table$relative, difference = table$difference,
            quantiles = table$quantiles, bound = which_bound,
-           condition = level,
-           method = paste("Ulrich-Miller-Schroeter test of the",
+           condition = level, by_block = isTRUE(grouped$by_block),
+           cdf_method = cdf_method, kernel_bw = kernel_bw,
+           method = paste(if (cdf_method == "kernel")
+                            "Log-kernel CDF test of the"
+                          else "Ulrich-Miller-Schroeter test of the",
                           which_bound, "bound"),
            p.adjust.method = p.adjust.method)
     })
@@ -560,7 +1008,7 @@ rmi.test <- function(inData, bound = c("miller", "grice", "both"),
 # used by .sft_normal_group_result(), one row per kept (participant, percentile)
 # cell, with the group index running over (condition, percentile) combinations.
 .sft_rmi_stack <- function(grouped, probs, bound, var_method = "analytic",
-                           n_boot = 2000L, min_n = 5L, errors = "discard") {
+                           n_boot = 2000L, min_n = 20L, errors = "discard") {
   parts <- lapply(grouped$levels, function(level) {
     .sft_rmi_score_data(grouped$conditions[[level]], probs, bound,
                         var_method = var_method, n_boot = n_boot,
@@ -750,7 +1198,14 @@ rmi.test <- function(inData, bound = c("miller", "grice", "both"),
 #' @param CR optional correct-response list when \code{inData} is a list.
 #' @param bound \code{"miller"} (upper bound, the race model inequality) or
 #'   \code{"grice"} (lower bound).
-#' @param probs percentile levels to evaluate.
+#' @param probs percentile levels to evaluate.  The default is the 10\%-25\%
+#'   range recommended by Kiesel, Miller and Ulrich (2007); see
+#'   \code{\link{rmi.test}}.  The multiplicity argument for restricting it is
+#'   weaker here, since the global summary is a single min-over-grid statement
+#'   rather than a family of tests, but the bias argument is not: percentile
+#'   estimates outside that range are the ones most affected by the systematic
+#'   bias they document, and the levels above the median are vacuous for the
+#'   Miller bound in any case.
 #' @param ndraws,burnin,thin,chains sampler settings.
 #' @param seed optional RNG seed.
 #' @param hdi mass of the reported highest-density intervals.
@@ -772,10 +1227,24 @@ rmi.test <- function(inData, bound = c("miller", "grice", "both"),
 #' @param n_boot bootstrap replicates when \code{var_method = "bootstrap"}.
 #' @param adapt_delta,max_treedepth,stan_control Stan sampler controls.
 #' @param Condition,Subject optional selectors.
-#' @param min_n minimum correct trials required per cell.
-#' @param qtype plotting-position rule for the reported time-scale quantiles;
-#'   see \code{\link{rmi.test}}.  It affects the accompanying quantile tables
-#'   only, never the probability-scale estimand.
+#' @param min_n minimum correct trials required per cell; with
+#'   \code{by_block = TRUE} it applies per participant, block, and cell.  The
+#'   default of 10 is half the sample size Ulrich et al. and Kiesel et al. recommend because 
+#'   there are usually 2+ blocks per subject;
+#'   see \code{\link{rmi.test}}.
+#' @param by_block evaluate the inequality separately within each participant
+#'   \emph{and} block, using the \code{Block} column of \code{inData}, and
+#'   average the per-block \eqn{\delta} curves, as Miller (1982) estimated his
+#'   quantiles.  Blocks are disjoint sets of trials, so the sampling covariance
+#'   of the average is the sum of the per-block covariances over the squared
+#'   number of blocks.  \code{FALSE} (the default) pools the whole session.
+#' @param qtype plotting-position rule for the cumulative frequency polygon
+#'   behind the reported time-scale quantiles; see \code{\link{rmi.test}}.  It
+#'   affects the accompanying quantile tables only, never the
+#'   probability-scale estimand, which uses the plain empirical CDF.
+#' @param cdf_method,kernel_bw estimator and bandwidth for the accompanying
+#'   time-scale quantile tables; see \code{\link{rmi.test}}. These do not alter
+#'   the Bayesian probability-scale estimand.
 #' @param errors how incorrect and omitted trials enter the cell CDFs.
 #'   \code{"discard"} keeps correct trials only, as Miller did and as
 #'   \code{\link{estimate.bounds}} does; \code{"defective"} counts an error in
@@ -796,9 +1265,17 @@ rmi.test <- function(inData, bound = c("miller", "grice", "both"),
 #' Ulrich, R., Miller, J., & Schroeter, H. (2007). Testing the race model
 #' inequality: An algorithm and computer programs. \emph{Behavior Research
 #' Methods}, 39, 291-302.
+#'
+#' Kiesel, A., Miller, J., & Ulrich, R. (2007). Systematic biases and Type I
+#' error accumulation in tests of the race model inequality. \emph{Behavior
+#' Research Methods}, 39, 539-551.
+#'
+#' Miller, J. (2016). Statistical facilitation and the redundant signals
+#' effect: What are race and coactivation models? \emph{Attention, Perception,
+#' & Psychophysics}, 78, 516-519.
 #' @export
 rmiGroup.bayes <- function(inData, CR = NULL, bound = c("miller", "grice"),
-                           probs = seq(.05, .95, by = .05),
+                           probs = seq(.10, .25, by = .05),
                            ndraws = 10000L, prior_shape = NULL,
                            prior_rate = NULL, seed = NULL, hdi = .94,
                            prior_mean = 0, prior_sd = NULL, burnin = 1000L,
@@ -808,10 +1285,13 @@ rmiGroup.bayes <- function(inData, CR = NULL, bound = c("miller", "grice"),
                            max_treedepth = 12L, stan_control = list(),
                            Condition = NULL, Subject = NULL,
                            var_method = c("analytic", "bootstrap"),
-                           n_boot = 2000L, min_n = 5L, qtype = 8,
-                           errors = c("discard", "defective")) {
+                           n_boot = 2000L, min_n = 10L, by_block = FALSE,
+                           qtype = 5, errors = c("discard", "defective"),
+                           cdf_method = c("polygon", "kernel"),
+                           kernel_bw = "nrd0") {
   bound <- .sft_rmi_bound(if (missing(bound)) "miller" else bound)
   errors <- match.arg(errors)
+  cdf_method <- match.arg(cdf_method)
   if (bound == "both") {
     stop("bound must be a single bound; fit 'miller' and 'grice' separately.",
          call. = FALSE)
@@ -825,7 +1305,7 @@ rmiGroup.bayes <- function(inData, CR = NULL, bound = c("miller", "grice"),
                            hdi, rope, adapt_delta, max_treedepth)
   .sft_validate_boot(var_method, n_boot)
 
-  grouped <- .sft_condition_input(inData, CR, "OR", Condition, Subject)
+  grouped <- .sft_rmi_input(inData, CR, Condition, Subject, by_block)
   old_seed <- .sft_bayes_seed(seed)
   on.exit(.sft_restore_bayes_seed(old_seed), add = TRUE)
   scored <- .sft_rmi_stack(grouped, probs, bound, var_method = var_method,
@@ -847,7 +1327,8 @@ rmiGroup.bayes <- function(inData, CR = NULL, bound = c("miller", "grice"),
 
   quantiles <- lapply(grouped$levels, function(level) {
     .sft_rmi_time_table(grouped$conditions[[level]], probs, bound,
-                        min_n = min_n, qtype = qtype)
+                        min_n = min_n, qtype = qtype,
+                        cdf_method = cdf_method, kernel_bw = kernel_bw)
   })
   names(quantiles) <- grouped$levels
   quantiles <- quantiles[!vapply(quantiles, is.null, logical(1))]
@@ -867,7 +1348,8 @@ rmiGroup.bayes <- function(inData, CR = NULL, bound = c("miller", "grice"),
     extra = list(bound = bound, probs = probs, var_method = var_method,
                  quantiles = quantiles, cells = scored$cells,
                  conditions = scored$conditions, min_n = min_n,
-                 errors = errors))
+                 by_block = isTRUE(grouped$by_block), errors = errors,
+                 cdf_method = cdf_method, kernel_bw = kernel_bw))
 
   mu_matrix <- out$mu_matrix
   map <- scored$map
@@ -949,6 +1431,35 @@ rmiGroup.bayes <- function(inData, CR = NULL, bound = c("miller", "grice"),
 }
 
 
+# Keep an explicitly requested percentile window when a builder receives an
+# already-computed result.  Raw trial data are passed through to rmi.test(),
+# which performs the full percentile validation; this helper only needs to
+# select levels that are present in a fitted result.
+.sft_rmi_filter_probs <- function(x, probs) {
+  if (is.null(probs)) return(x)
+  requested <- sort(unique(as.numeric(probs)))
+  if (!length(requested) || any(!is.finite(requested)) ||
+      any(requested <= 0) || any(requested >= 1)) {
+    stop("probs must be finite percentile levels strictly inside (0, 1).",
+         call. = FALSE)
+  }
+  if (!"prob" %in% names(x)) return(x)
+  available <- unique(x$prob[is.finite(x$prob)])
+  matched <- vapply(requested, function(p) {
+    any(abs(available - p) <= 1e-8)
+  }, logical(1))
+  if (any(!matched)) {
+    stop("Requested percentile level(s) are not present in the supplied ",
+         "result: ", paste(format(requested[!matched]), collapse = ", "),
+         ". Pass raw trial data to recompute them.", call. = FALSE)
+  }
+  keep <- vapply(x$prob, function(p) {
+    any(abs(p - requested) <= 1e-8)
+  }, logical(1))
+  x[keep, , drop = FALSE]
+}
+
+
 #' Tidy data frames for race model inequality figures.
 #'
 #' \code{build_rmi_bound_df} produces the classical race-model figure: the
@@ -982,17 +1493,41 @@ rmiGroup.bayes <- function(inData, CR = NULL, bound = c("miller", "grice"),
 #' @param x result of \code{\link{rmi.test}} or \code{\link{rmiGroup.bayes}}.
 #' @param bound optional bound to keep when the result holds both.
 #' @param condition optional condition(s) to keep.
+#' @param probs optional percentile levels. For raw trial data these are passed
+#'   to \code{rmi.test}; for an existing result they select levels already
+#'   present in that result. If omitted, the \code{rmi.test} default is used
+#'   for raw data and all levels are retained from an existing result.
 #' @param scale for \code{build_rmi_violation_df}, \code{"auto"} (probability
 #'   scale if the fit is Bayesian, otherwise time), \code{"probability"}, or
 #'   \code{"time"}.
+#' @param by_block passed to \code{\link{rmi.test}} when \code{x} is a raw
+#'   trial dataset: estimate the quantiles per participant and block rather than
+#'   per participant.
+#' @param qtype plotting-position rule passed to \code{\link{rmi.test}} when
+#'   \code{x} is a raw trial dataset.
+#' @param cdf_method,kernel_bw CDF estimator and kernel bandwidth passed to
+#'   \code{\link{rmi.test}} when \code{x} is a raw trial dataset.
 #' @return A long \code{data.frame}.
 #' @references
 #' Miller, J. (1982). Divided attention: Evidence for coactivation with
 #' redundant signals. \emph{Cognitive Psychology}, 14, 247-279.
 #' @name build_rmi_df
 #' @export
-build_rmi_cdf_df <- function(x, bound = NULL, condition = NULL) {
+build_rmi_cdf_df <- function(x, bound = NULL, condition = NULL,
+                             by_block = FALSE, qtype = 5, probs = NULL,
+                             cdf_method = c("polygon", "kernel"),
+                             kernel_bw = "nrd0") {
+  cdf_method <- match.arg(cdf_method)
+  if (is.data.frame(x) && !all(c("prob", "q_AB", "q_bound") %in% names(x))) {
+    args <- list(inData = x,
+                 bound = if (is.null(bound)) "miller" else bound,
+                 by_block = by_block, qtype = qtype,
+                 cdf_method = cdf_method, kernel_bw = kernel_bw)
+    if (!is.null(probs)) args$probs <- probs
+    x <- do.call(rmi.test, args)
+  }
   q <- .sft_rmi_collect(x, bound, condition)
+  q <- .sft_rmi_filter_probs(q, probs)
   cells <- c(A = "q_A", B = "q_B", AB = "q_AB")
   out <- .sft_bind_rows(lapply(names(cells), function(cell) {
     data.frame(bound = q$bound, condition = q$condition, prob = q$prob,
@@ -1008,8 +1543,21 @@ build_rmi_cdf_df <- function(x, bound = NULL, condition = NULL) {
 
 #' @rdname build_rmi_df
 #' @export
-build_rmi_bound_df <- function(x, bound = NULL, condition = NULL) {
+build_rmi_bound_df <- function(x, bound = NULL, condition = NULL,
+                               by_block = FALSE, qtype = 5, probs = NULL,
+                               cdf_method = c("polygon", "kernel"),
+                               kernel_bw = "nrd0") {
+  cdf_method <- match.arg(cdf_method)
+  if (is.data.frame(x) && !all(c("prob", "q_AB", "q_bound") %in% names(x))) {
+    args <- list(inData = x,
+                 bound = if (is.null(bound)) "miller" else bound,
+                 by_block = by_block, qtype = qtype,
+                 cdf_method = cdf_method, kernel_bw = kernel_bw)
+    if (!is.null(probs)) args$probs <- probs
+    x <- do.call(rmi.test, args)
+  }
   q <- .sft_rmi_collect(x, bound, condition)
+  q <- .sft_rmi_filter_probs(q, probs)
   bound_label <- ifelse(q$bound %in% "grice", "max(A, B) bound", "A + B bound")
   out <- rbind(
     data.frame(bound = q$bound, condition = q$condition, prob = q$prob,
@@ -1026,8 +1574,20 @@ build_rmi_bound_df <- function(x, bound = NULL, condition = NULL) {
 #' @rdname build_rmi_df
 #' @export
 build_rmi_violation_df <- function(x, bound = NULL, condition = NULL,
-                                   scale = c("auto", "probability", "time")) {
+                                   scale = c("auto", "probability", "time"),
+                                   by_block = FALSE, qtype = 5, probs = NULL,
+                                   cdf_method = c("polygon", "kernel"),
+                                   kernel_bw = "nrd0") {
   scale <- match.arg(scale)
+  cdf_method <- match.arg(cdf_method)
+  if (is.data.frame(x) && !all(c("prob", "mean", "lower", "upper") %in% names(x))) {
+    args <- list(inData = x,
+                 bound = if (is.null(bound)) "miller" else bound,
+                 by_block = by_block, qtype = qtype,
+                 cdf_method = cdf_method, kernel_bw = kernel_bw)
+    if (!is.null(probs)) args$probs <- probs
+    x <- do.call(rmi.test, args)
+  }
   bayesian <- is.data.frame(x$percentile)
   if (scale == "probability" && !bayesian) {
     stop("The probability-scale violation curve is produced by ",
@@ -1035,6 +1595,7 @@ build_rmi_violation_df <- function(x, bound = NULL, condition = NULL,
   }
   if (bayesian && scale != "time") {
     out <- x$percentile
+    out <- .sft_rmi_filter_probs(out, probs)
     if (!is.null(condition)) out <- out[out$condition %in% condition, , drop = FALSE]
     out$scale <- "probability"
     out$bound <- x$bound %||% NA_character_
@@ -1069,6 +1630,7 @@ build_rmi_violation_df <- function(x, bound = NULL, condition = NULL,
          call. = FALSE)
   }
   out <- .sft_bind_rows(parts)
+  out <- .sft_rmi_filter_probs(out, probs)
   if (!is.null(bound)) out <- out[out$bound %in% bound, , drop = FALSE]
   if (!is.null(condition)) out <- out[out$condition %in% condition, , drop = FALSE]
   rownames(out) <- NULL

@@ -8,7 +8,8 @@ Calculates the bounds on the range of cumulative distribution functions for resp
 }
 \usage{
 estimate.bounds(RT, CR = NULL, stopping.rule = c("OR","AND","STST"), 
-  assume.ID=FALSE, numchannels=NULL, unified.space=FALSE)
+  assume.ID=FALSE, numchannels=NULL, unified.space=FALSE, qtype = NULL,
+  cdf_method = NULL, kernel_bw = "nrd0")
 }
 \arguments{
   \item{RT}{A list of numeric response time arrays for the individual processing channels}
@@ -17,9 +18,25 @@ estimate.bounds(RT, CR = NULL, stopping.rule = c("OR","AND","STST"),
   \item{assume.ID}{A logical indicating whether the individual channel distributions are assumed to be Identically Distributed (ID). If FALSE, non-ID distributions are estimated from the RT data. If TRUE, only the first array in RT is used, together with numchannels, to estimate the distributions.}
   \item{numchannels}{Number of channels in the parallel processing model when all channels are active. If NULL,number channels will be estimated equal to length of RT.}
   \item{unified.space}{A logical indicating whether the unified capacity space version of the bounds should be estimated.}
+  \item{qtype}{Optional integer (1--9) specifying the quantile type rule used for constructing continuous channel CDFs (e.g. 5 for Miller 1982 plotting positions). If NULL (default), standard empirical step CDFs (\code{ecdf}) are used.}
+  \item{cdf_method}{Optional CDF estimator: \code{"ecdf"},
+    \code{"polygon"}, or \code{"kernel"}. The default \code{NULL} preserves
+    existing behavior: \code{"ecdf"} when \code{qtype} is \code{NULL}, and
+    \code{"polygon"} otherwise. With \code{"kernel"}, every channel uses the
+    exact Gaussian kernel distribution estimator.}
+  \item{kernel_bw}{Bandwidth selector or one positive bandwidth for
+    \code{cdf_method = "kernel"}. The default \code{"nrd0"} uses R's standard
+    rule independently for each channel; other selectors accepted by
+    \code{\link[stats]{density}} may also be supplied.}
 }
 \details{
 The \emph{estimate.bounds} function uses the response times from individual channels processing in isolation to estimae the response time distributions for an \eqn{n}{n}-channel parallel model. The input argument RT must be a list of numeric arrays, containing either one array for each of the \eqn{n}{n} channels to be estimated (so length(RT)=n), or it can have length(RT)=1 and the bounds can be found under an assumption that the \eqn{n}{n} channels are identically distributed to the data in RT. For this latter case, assume.ID=TRUE and numchannels=n (where \eqn{n \ge 2}{n \ge 2}) must be specified.
+
+For \code{cdf_method = "kernel"}, a channel with observations \eqn{x_i} and
+bandwidth \eqn{h} is estimated as
+\deqn{\widehat F_h(t)=n^{-1}\sum_i\Phi((t-x_i)/h).}
+This CDF is evaluated analytically; it is not obtained by numerically
+integrating a gridded density estimate.
 
 Standard unlimited capacity parallel processing models for \eqn{n}{n} simultaneously operating channels can produce a range of behavior, which is bounded by various functions derived from the probability distributions on each of the \eqn{i}{i}, for \eqn{i=1,\ldots,n}{i=1,...,n}, channels operating in isolation. These bounds depend on the stopping rule under which is the parallel model is assumed to be operating (OR, AND, or STST).
 

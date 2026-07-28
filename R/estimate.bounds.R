@@ -1,15 +1,96 @@
-#estimate bounds on processing
-#RT should be a list of response times, with each entry corresponding to a single
-#individual processing channel
-#CR is the list of correct/incorrect logical indicators, with size matching RT
+# Helper to construct quantile-rule based continuous empirical CDFs (types 1-9)
+.make_quantile_cdf <- function(x, qtype = 5) {
+  x <- sort(as.numeric(x))
+  n <- length(x)
+  if (n == 0L) return(function(t) numeric(length(t)))
+  p <- switch(as.character(qtype),
+    "1" = (seq_len(n)) / n,
+    "2" = (seq_len(n)) / n,
+    "3" = (seq_len(n) - 0.5) / n,
+    "4" = (seq_len(n)) / n,
+    "5" = (seq_len(n) - 0.5) / n,
+    "6" = (seq_len(n)) / (n + 1),
+    "7" = if (n > 1L) (seq_len(n) - 1) / (n - 1) else 1,
+    "8" = (seq_len(n) - 1/3) / (n + 1/3),
+    "9" = (seq_len(n) - 3/8) / (n + 0.25),
+    (seq_len(n) - 0.5) / n
+  )
+  ux <- unique(x)
+  # Ties must be placed at the *midpoint* of the vertical jump they produce,
+  # (s_{i-1} + s_i) / (2n), which is Appendix A of Ulrich, Miller & Schroeter
+  # (2007) and is the mean -- not the maximum -- of the tied observations'
+  # plotting positions.  Taking the maximum biased the estimated CDF upward by
+  # (n_i - 1) / (2n) at every repeated value, which matters because RT is
+  # recorded to the nearest millisecond.  Only reachable when `qtype` is
+  # supplied; the default NULL path uses ecdf() and is unaffected.
+  up <- vapply(ux, function(z) mean(p[x == z]), numeric(1))
+  function(t) {
+    out <- numeric(length(t))
+    lo <- t < ux[1L]
+    hi <- t > ux[length(ux)]
+    mid <- !(lo | hi)
+    out[hi] <- 1
+    if (length(ux) == 1L) {
+      out[mid] <- up
+    } else if (any(mid)) {
+      out[mid] <- stats::approx(ux, up, xout = t[mid], rule = 2)$y
+    }
+    out
+  }
+}
 
-#if assume.ID=TRUE, then RT only needs to be a vector or the first entry of RT is used
+
+# Exact Gaussian kernel distribution estimator:
+#   F_h(t) = n^-1 sum_i Phi((t - x_i) / h).
+# Log-transformed Gaussian kernel distribution estimator:
+#   F_h(t) = n^-1 sum_i Phi((log(t) - log(x_i)) / h) for t > 0, 0 for t <= 0.
+# Bandwidth selector `density()` operates on log(x) to prevent boundary leakage.
+.make_kernel_cdf <- function(x, bw = "nrd0") {
+  x <- as.numeric(x)
+  x <- x[is.finite(x) & x > 0]
+  if (length(x) < 2L) {
+    stop("Kernel CDF estimation needs at least two positive finite response times.",
+         call. = FALSE)
+  }
+  tx <- log(x)
+  h <- if (is.character(bw)) {
+    if (length(bw) != 1L) stop("kernel_bw must have length one.", call. = FALSE)
+    stats::density(tx, bw = bw, n = 2L)$bw
+  } else {
+    as.numeric(bw)
+  }
+  if (length(h) != 1L || !is.finite(h) || h <= 0) {
+    stop("kernel_bw must select or supply one positive finite bandwidth.",
+         call. = FALSE)
+  }
+  out <- function(t) {
+    t <- as.numeric(t)
+    res <- numeric(length(t))
+    pos <- t > 0
+    if (any(pos)) {
+      lt <- log(t[pos])
+      res[pos] <- vapply(lt, function(z) mean(stats::pnorm((z - tx) / h)),
+                         numeric(1))
+    }
+    res
+  }
+  attr(out, "bw") <- h
+  attr(out, "range") <- range(x)
+  out
+}
 
 
 estimate.bounds <- function (RT, CR = NULL, stopping.rule = c("OR","AND","STST"), assume.ID=FALSE,
-                             numchannels=NULL, unified.space=FALSE) 
+                             numchannels=NULL, unified.space=FALSE, qtype = NULL,
+                             cdf_method = NULL, kernel_bw = "nrd0")
 {
   rule <- match.arg(stopping.rule, c("OR","AND","STST"))
+  if (is.null(cdf_method)) {
+    cdf_method <- if (is.null(qtype)) "ecdf" else "polygon"
+  } else {
+    cdf_method <- match.arg(cdf_method, c("ecdf", "polygon", "kernel"))
+  }
+  if (cdf_method == "polygon" && is.null(qtype)) qtype <- 5L
   
   nconds <- length(RT) #total number of input RTs
   n.channels <- numchannels
@@ -30,22 +111,32 @@ estimate.bounds <- function (RT, CR = NULL, stopping.rule = c("OR","AND","STST")
     }
   }
   
-  #find overall range of RTs
-  times <- sort(unique(c(RT, recursive = TRUE)))
-  nt <- length(times)
-  
-  #establish CDFs and survivor functions for each single target distribution
-  G <- vector('list',nconds)
-  Gmat <- matrix(rep(0,nconds*nt), ncol=nconds, nrow=nt)
-  Smat <- matrix(rep(0,nconds*nt), ncol=nconds, nrow=nt)
-  for (j in 1:nconds){
+  # Establish CDFs and survivor functions for each single-target distribution.
+  keep <- lapply(seq_len(nconds), function(j) {
     RTx <- sort(RT[[j]], index.return = TRUE)
     RTj <- RTx$x
     CRj <- as.logical(CR[[j]])[RTx$ix]
-    G[[j]] <- ecdf(RTj[CRj])
-    Gmat[,j] <- G[[j]](times)
-    Smat[,j] <- 1-Gmat[,j]
+    RTj[CRj & is.finite(RTj)]
+  })
+  G <- lapply(keep, function(x) {
+    switch(cdf_method,
+           ecdf = stats::ecdf(x),
+           polygon = .make_quantile_cdf(x, qtype = qtype),
+           kernel = .make_kernel_cdf(x, bw = kernel_bw))
+  })
+  times <- sort(unique(c(RT, recursive = TRUE)))
+  times <- times[is.finite(times)]
+  if (cdf_method == "kernel") {
+    lower <- min(vapply(G, function(f) exp(log(attr(f, "range")[1L]) - 8 * attr(f, "bw")), numeric(1)))
+    upper <- max(vapply(G, function(f) exp(log(attr(f, "range")[2L]) + 8 * attr(f, "bw")), numeric(1)))
+    # A dense common grid preserves the smooth channel CDFs when the final
+    # algebraic bounds are returned as approxfun objects.
+    times <- sort(unique(c(times, seq(lower, upper, length.out = 4096L))))
   }
+  nt <- length(times)
+  Gmat <- vapply(G, function(f) f(times), numeric(nt))
+  if (nconds == 1L) Gmat <- matrix(Gmat, ncol = 1L)
+  Smat <- 1 - Gmat
   
   #given the stopping rule, estimate the CDF bounds
   if (rule == "OR"){  
