@@ -5,20 +5,32 @@
 #' Fit an OR-centred semiparametric hierarchical Bayesian SFT model.
 #'
 #' Fits a hierarchical piecewise-exponential model of the underlying survival
-#' and hazard functions and derives capacity from the posterior; with a
-#' `salience_split` it fits the full double-factorial design and additionally
-#' derives the survivor interaction contrast (see [sic.bayes()]) and the mean
-#' interaction contrast (see [mic.bayes()]) hierarchically at subject and group
-#' levels.
+#' and hazard functions and derives capacity from the posterior. A
+#' `salience_split` fits the full double-factorial design and also derives the
+#' survivor interaction contrast ([sic.bayes()]) and mean interaction contrast
+#' ([mic.bayes()]) at subject and group levels.
 #'
 #' The input must contain Subject, Condition, RT, Correct, Channel1, and
-#' Channel2.  By default positive salience values are pooled by channel
-#' presence into AB, A, and B.  With `salience_split`, the model retains
+#' Channel2. By default, positive salience values are pooled by channel
+#' presence into AB, A, and B. With `salience_split`, the model retains
 #' A_L/A_H, B_L/B_H, and AB_LL/AB_LH/AB_HL/AB_HH, then hierarchically pools
-#' matched capacity deviations across those cells.  Correct finite trials are
-#' events; incorrect finite trials are censored exposure.  Fitting requires
-#' the optional rstan package, but `sample = FALSE` still performs and returns
-#' the complete preparation stage.
+#' matched capacity deviations across cells. Correct finite trials are events;
+#' incorrect finite trials contribute censored exposure. Fitting requires the
+#' optional rstan package. `sample = FALSE` returns the prepared data and prior
+#' predictive results without sampling.
+#'
+#' @details
+#' The model centres the dual-target hazard on the sum of the two single-target
+#' hazards under the OR stopping rule:
+#' \deqn{\log h_A(t) = \alpha_A(t) + speed + asymmetry/2,}
+#' \deqn{\log h_B(t) = \alpha_B(t) + speed - asymmetry/2,}
+#' \deqn{\log h_{AB}(t) =
+#' \operatorname{log\_sum\_exp}(\log h_A(t), \log h_B(t))
+#' + \delta(t) + capacity\_shift.}
+#' Smooth population functions use second-difference random-walk priors and
+#' subject effects use non-centred parameterizations. In salience-split mode,
+#' capacity is transformed within each matched cell and then averaged draw by
+#' draw. SIC and MIC are computed from the same posterior survivor draws.
 #'
 #' @param inData Canonical SFT data frame. `data` and `sftData` are accepted
 #'   aliases for backward compatibility. Within the data frame, `rt`,
@@ -31,20 +43,35 @@
 #' @param priors Named prior overrides; see the returned `prior_metadata`.
 #' @param smoothness Named smoothness overrides, including `basis_dim`, `A`,
 #'   `B`, and `delta`.
-#' @param require_complete Require every subject to have AB, A, and B.
+#' @param require_complete Require every participant to have every requested
+#'   series: AB/A/B in pooled mode or all eight series in split mode.
 #' @param cell_mapping Optional function of Channel1 and Channel2 returning an
 #'   OR series label per trial; it may return pooled labels or the salience-split
 #'   labels documented below.
-#' @param salience_split Retain low/high salience cells.  Use `TRUE` or
+#' @param salience_split Retain low/high salience cells. Use `TRUE` or
 #'   `"auto"` when each channel has exactly two positive levels, a numeric
 #'   vector of the two levels, a list with `Channel1` and `Channel2` mappings,
 #'   or a function returning `L`/`H` labels.  `NULL` preserves pooled mode.
-#' @param sample If TRUE, run the optional rstan sampler.
+#' @param sample If `TRUE`, run the optional rstan sampler.
 #' @param posterior_draws Optional precomputed log-hazard arrays for testing or
 #'   downstream shared-engine use; bypasses rstan when supplied.
+#' @param chains,iter,warmup,seed,cores,refresh,control rstan sampling controls.
+#' @param hdi Posterior interval mass.
+#' @param rope Practical-equivalence half-width around 0 for difference
+#'   capacity and around 1 for ratio capacity.
+#' @param prior_predictive_draws,posterior_predictive_draws Numbers of draws
+#'   used for predictive checks.
+#' @param return_fit Store the rstan fit in the returned object.
+#' @param sftData,data Aliases for `inData`.
 #' @param ... Compatibility aliases: `bins`, `nbin`, `grid_bins`, `rt.units`,
-#'   `central_quantiles`, `prior`, `smooth`, `fit`, and `salience`.
-#' @return An object of class `sft_bayes`.
+#'   `central_quantiles`, `prior`, `smooth`, `fit`, `salience`, and
+#'   `salience_mapping`.
+#' @return An `sft_bayes` object containing prepared trials, the pooled grid,
+#'   exposure and event arrays, posterior draws, cumulative hazards, capacity
+#'   curves and summaries, predictive checks, diagnostics, and prior metadata.
+#'   Tidy curve rows are available in `tidy_curves` and `curve_data`.
+#'   Salience-split fits also contain `sic` and `mic`.
+#' @seealso [sic.bayes()], [mic.bayes()], [sft_waic()]
 #' @export
 semiparametricSFT.bayes <- function(inData = NULL, Condition = NULL, n_bins = 25L,
                            rt_units = c("seconds", "milliseconds"),
@@ -310,17 +337,25 @@ print.sft_bayes <- function(x, ...) {
 #' Extract the hierarchical posterior MIC from an OR capacity model.
 #'
 #' The mean interaction contrast MIC = mean(LL) - mean(LH) - mean(HL) + mean(HH)
-#' is the signed area under the survivor interaction contrast; it is computed
+#' is the signed area under the survivor interaction contrast. It is computed
 #' draw by draw at the subject, population (typical-subject parameter),
-#' population_finite_mean, and new_subject levels, together with subject-versus-
-#' population contrasts, so its sign can be tested against zero at every level.
+#' population_finite_mean, and new_subject levels, together with
+#' subject-to-population contrasts.
 #' It is only identified from a salience-split fit.
+#'
+#' Positive MIC values support an over-additive architecture, such as parallel
+#' self-terminating or coactive processing. Negative values support a
+#' parallel-exhaustive architecture. Values near zero are consistent with an
+#' additive serial architecture.
 #'
 #' @param object A fitted `sft_bayes` object, or a canonical SFT data
 #'   frame to fit with [semiparametricSFT.bayes()].
-#' @param ... Passed to [semiparametricSFT.bayes()] when `object` is a data frame.  A
+#' @param ... Passed to [semiparametricSFT.bayes()] when `object` is a data frame. A
 #'   `salience_split` is required to identify the cells and defaults to `TRUE`.
-#' @return A list with `summary`, `contrasts`, per-level `draws`, and metadata.
+#' @return A list with `summary`, subject-to-population `contrasts`, per-level
+#'   `draws`, and metadata. Summary rows contain posterior means,
+#'   highest-density intervals, and sign probabilities.
+#' @seealso [semiparametricSFT.bayes()], [sic.bayes()], [mic.test()]
 #' @export
 mic.bayes <- function(object, ...) {
   if (inherits(object, "sft_bayes")) {
@@ -349,11 +384,19 @@ mic.bayes <- function(object, ...) {
 #'
 #' Returns the survivor interaction contrast SIC(t) at the subject (partially
 #' pooled), population (typical-subject parameter), population_finite_mean, and
-#' new_subject (posterior-predictive) levels, with pointwise posterior sign
-#' probabilities.  It is only identified from a salience-split fit.
+#' new_subject (posterior predictive) levels, with pointwise posterior sign
+#' probabilities. It is only identified from a salience-split fit.
+#'
+#' An all-positive curve is consistent with parallel self-terminating or
+#' coactive processing; an all-negative curve is consistent with parallel
+#' exhaustive processing. A negative-then-positive curve with zero net area is
+#' the serial signature.
 #'
 #' @inheritParams mic.bayes
-#' @return A list with a tidy `summary` and per-level views plus metadata.
+#' @return A list with a tidy `summary`, per-level views, and metadata. Summary
+#'   rows contain posterior means, highest-density intervals, and pointwise
+#'   sign probabilities.
+#' @seealso [semiparametricSFT.bayes()], [mic.bayes()], [sic.test()]
 #' @export
 sic.bayes <- function(object, ...) {
   if (inherits(object, "sft_bayes")) {

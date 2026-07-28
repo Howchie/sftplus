@@ -11,18 +11,51 @@
 }
 
 
-.sft_curve <- function(x, y, default = NA_real_) {
+.sft_curve <- function(x, y, default = NA_real_, rule = 1L) {
   x <- as.numeric(x)
   y <- as.numeric(y)
-  keep <- is.finite(x) & is.finite(y) & !is.na(y)
-  if (!any(keep)) return(.sft_zero_curve(default))
-  x <- x[keep]
-  y <- y[keep]
+  # Only non-finite times are dropped.  Non-finite y values are kept as NA
+  # markers: the callers use them to record where an estimate is undefined
+  # (a zero denominator, a log of zero), and interpolating across them would
+  # invent a curve in exactly the region the caller flagged as unusable.
+  ok <- is.finite(x)
+  if (!any(ok)) return(.sft_zero_curve(default))
+  x <- x[ok]
+  y <- y[ok]
+  y[!is.finite(y)] <- NA_real_
   ord <- order(x)
   x <- x[ord]
   y <- y[ord]
+  if (!any(!is.na(y))) return(.sft_zero_curve(default))
   if (length(x) == 1L) return(.sft_zero_curve(y[[1L]]))
-  stats::approxfun(x, y, rule = 2, ties = "ordered")
+  # rule = 1 returns NA outside the estimated support; na.rm = FALSE lets the
+  # NA markers propagate into the intervals adjoining them.
+  stats::approxfun(x, y, rule = rule, ties = "ordered", na.rm = FALSE)
+}
+
+
+.sft_probs <- function(probs) {
+  probs <- sort(unique(as.numeric(probs)))
+  if (!length(probs) || any(!is.finite(probs)) || any(probs <= 0) ||
+      any(probs >= 1)) {
+    stop("probs must be finite percentile levels strictly inside (0, 1).",
+         call. = FALSE)
+  }
+  probs
+}
+
+
+.sft_time_grid <- function(rt, n.times = 1000L) {
+  # A scale-free replacement for round(rt): keep the observed times when there
+  # are few enough of them, otherwise thin to an evenly spaced grid spanning
+  # the same range.  Rounding to the nearest integer collapsed second-scale
+  # response times to a handful of distinct values.
+  x <- as.numeric(rt)
+  x <- sort(unique(x[is.finite(x)]))
+  if (!length(x)) stop("RT contains no finite response times.")
+  n.times <- as.integer(n.times)
+  if (is.na(n.times) || n.times < 2L || length(x) <= n.times) return(x)
+  seq(x[1L], x[length(x)], length.out = n.times)
 }
 
 
@@ -132,14 +165,19 @@
 
 #' Convert canonical row-wise SFT data to RT/CR list input.
 #'
-#' The list-based SFT estimators historically accept one response-time vector
-#' per experimental cell.  This adapter extracts the usual two-channel cells
-#' from a trial-level data frame.  For OR and AND it returns AB, A, and B,
-#' using positive channel values as target-present.  For STST it returns
+#' Converts a trial-level data frame to one response-time vector and one
+#' correctness vector per experimental cell. For OR and AND stopping rules it
+#' returns AB, A, and B, using positive channel values as target-present. For
+#' STST it returns
 #' context and target cells using the package's signed-channel convention.
 #' With multiple subjects, the default result is nested by subject so it can
-#' be passed directly to `capacityGroup.bayes()`; select one subject or use
+#' be passed to `capacityGroup.bayes()`; select one subject or use
 #' `by_subject = "never"` for single-subject functions.
+#'
+#' Rows with both channels off are omitted from OR and AND output unless
+#' `include_nn = TRUE`. Under the STST convention, context rows have one
+#' positive and one negative channel; target rows have one nonzero,
+#' non-negative channel.
 #'
 #' @param data A data frame containing `Subject`, `RT`, `Correct`, `Channel1`,
 #'   and `Channel2`; `Condition` is optional when only one condition is used.
@@ -154,6 +192,12 @@
 #' @param include_nn Include the both-off `NN` cell for OR/AND conversion.
 #' @return A list with `RT` and matching `CR` lists.  Metadata are stored as
 #'   attributes, including selected subjects, condition, and dropped rows.
+#' @examples
+#' one <- sft_data_to_rt(dots, Condition = "OR", Subject = "S1")
+#' names(one$RT)
+#'
+#' group <- sft_data_to_rt(dots, Condition = "OR")
+#' length(group$RT)
 #' @export
 sft_data_to_rt <- function(data, Condition = NULL, Subject = NULL,
                            stopping.rule = c("OR", "AND", "STST"),

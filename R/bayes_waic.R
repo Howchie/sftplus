@@ -72,13 +72,13 @@
 #' Model-comparison criteria for a semiparametric SFT fit.
 #'
 #' Returns WAIC, and PSIS-LOO when the optional \pkg{loo} package is installed,
-#' from the pointwise Poisson log-likelihood of the fitted hazard model.  Use it
-#' to compare fits that differ in structure -- pooled versus salience-split, or
-#' different bin counts, basis dimensions, or smoothness priors.
+#' from the pointwise Poisson log-likelihood of the fitted hazard model. The
+#' criteria can compare pooled and salience-split fits or fits with different
+#' bin counts, basis dimensions, or smoothness priors.
 #'
 #' The criteria are cell-wise: they estimate predictive accuracy for a new time
-#' bin of an observed participant, not for a new participant.  Compare only fits
-#' built on the *same* pooled grid and the same set of observations, since the
+#' bin of an observed participant, not for a new participant. Compare only fits
+#' built on the same pooled grid and the same set of observations because the
 #' observation set defines the quantity being summed.
 #'
 #' @param object A fitted \code{sft_bayes} object from

@@ -71,12 +71,7 @@
 
 
 .sft_rmi_probs <- function(probs) {
-  probs <- sort(unique(as.numeric(probs)))
-  if (!length(probs) || any(!is.finite(probs)) || any(probs <= 0) ||
-      any(probs >= 1)) {
-    stop("probs must be finite percentile levels strictly inside (0, 1).",
-         call. = FALSE)
-  }
+  probs <- .sft_probs(probs)
   if (length(probs) < 3L) {
     stop("probs must contain at least three percentile levels; the shape of the ",
          "violation curve and the min-over-grid global summary are not ",
@@ -831,65 +826,57 @@
 }
 
 
-#' Race model inequality tests (Miller 1982; Ulrich, Miller & Schroeter 2007).
+#' Classical race model inequality tests
 #'
-#' \code{rmi.test} reproduces the classical procedure: per-participant quantiles
-#' of the bound distribution and of the redundant-target distribution are
-#' compared at each percentile level with a one-sided t-test across
-#' participants.  It is provided so that a replication can run the classical and
-#' the hierarchical Bayesian analyses (\code{\link{rmiGroup.bayes}}) on identical
-#' data through one input path.
+#' Computes participant-level quantiles of the race-model bound and the
+#' redundant-target distribution, then compares them at each percentile with a
+#' one-sided t-test across participants. This implements the procedure of Miller
+#' (1982) and Ulrich, Miller and Schroeter (2007).
 #'
 #' @param inData canonical trial data frame with \code{Subject}, \code{RT},
 #'   \code{Correct}, \code{Channel1}, \code{Channel2} and optionally
 #'   \code{Condition}, or a pre-split RT/CR list.
 #' @param bound \code{"miller"} (upper bound, the race model inequality),
 #'   \code{"grice"} (lower bound), or \code{"both"}.
-#' @param probs percentile levels to test.  The default is the 10\%-25\% range
-#'   recommended by Kiesel, Miller and Ulrich (2007): testing the whole
-#'   distribution accumulates Type I error to roughly 13\%, percentiles above
-#'   the median are vacuous for the Miller bound, and 10\%-25\% is where
-#'   violations are in practice found, so restricting the range costs little
-#'   power.  Widen it deliberately, not by habit.
+#' @param probs Percentile levels to test. The default 10\%-25\% range follows
+#'   Kiesel, Miller and Ulrich (2007). They found that testing the full
+#'   distribution inflated the Type I error rate to about 13\%, while Miller
+#'   bound tests above the median were uninformative.
 #' @param p.adjust.method multiplicity adjustment passed to
-#'   \code{\link[stats]{p.adjust}}; the default \code{"holm"} is applied because
-#'   the classical procedure applies none.  Kiesel et al. note that
-#'   Bonferroni-type corrections are conservative here, because the tests at
-#'   adjacent percentiles correlate .77 to .95, and prefer range restriction as
-#'   the primary control; \code{p.adjust.method = "none"} recovers their
-#'   procedure once \code{probs} is restricted.
+#'   \code{\link[stats]{p.adjust}}. The default is \code{"holm"}.
+#'   \code{p.adjust.method = "none"} reproduces the unadjusted classical test.
 #' @param Condition,Subject optional selectors.
 #' @param min_n minimum correct trials required per cell; with
-#'   \code{by_block = TRUE} it applies per participant, block, and cell.  The
+#'   \code{by_block = TRUE} it applies per participant, block, and cell. The
 #'   default of 10 is the sample size Ulrich et al. and Kiesel et al. recommend
-#'   if, as in Miller (1982), there are at least 2 blocks per subject;
-#'   below it the systematic bias in percentile estimation is large enough to
-#'   produce spurious violations, and Kiesel et al. advise treating rejections
-#'   obtained with fewer than 20 trials in any cell with suspicion.
+#'   when there are at least two blocks per participant. With pooled sessions,
+#'   they recommend at least 20 trials per cell.
 #' @param by_block estimate the quantiles separately within each participant
 #'   \emph{and} block, using the \code{Block} column of \code{inData}, and
-#'   average over blocks, as Miller (1982) did.  \code{FALSE} (the default)
+#'   average over blocks, as Miller (1982) did. \code{FALSE} (the default)
 #'   pools the whole session and estimates one set of quantiles per participant
 #'   (and condition).
 #' @param qtype plotting-position rule for the cumulative frequency polygon
-#'   from which both the reported quantiles and the bound are estimated.  The
+#'   from which both the reported quantiles and the bound are estimated. The
 #'   default 5 places the ith of n ordered RTs at \eqn{(i - .5)/n}, which is
 #'   Equation 2 of Ulrich, Miller and Schroeter (2007) and the convention
 #'   Miller (1982) used; ties follow their Appendix A whatever the rule.
 #' @param cdf_method \code{"polygon"} (default) for the Ulrich et al.
-#'   cumulative-frequency polygon, or \code{"kernel"} for a fully symmetric
-#'   Gaussian kernel-CDF analysis. In the kernel analysis the A, B, and AB CDFs,
+#'   cumulative-frequency polygon, or \code{"kernel"} for a Gaussian
+#'   kernel-CDF analysis. In the kernel analysis the A, B, and AB CDFs,
 #'   their quantiles, and the bound all use the same estimator; \code{qtype} is
 #'   then ignored.
 #' @param kernel_bw bandwidth selector or one positive bandwidth for
 #'   \code{cdf_method = "kernel"}. The default \code{"nrd0"} uses R's standard
 #'   rule independently in each cell. Other selectors accepted by
 #'   \code{\link[stats]{density}} may also be supplied.
-#' @return A list with one element per requested bound, each containing the
-#'   per-percentile \code{test} table, the per-participant \code{subject} table,
-#'   the quantile-averaged \code{quantiles} table used by
-#'   \code{\link{build_rmi_bound_df}}, and the relative (base-time free)
-#'   summary.
+#' @return A list with one element per requested bound and condition. Each
+#'   contains a per-percentile \code{test} table; a per-participant
+#'   \code{subject} table with cell quantiles, differences, trial counts, and
+#'   block counts; raw and relative group summaries; and the
+#'   quantile-averaged \code{quantiles} table used by
+#'   \code{\link{build_rmi_bound_df}}. Single bound and condition levels are
+#'   unwrapped.
 #' @seealso \code{\link{rmiGroup.bayes}} for the hierarchical Bayesian analysis
 #'   on the probability scale, and \code{\link{build_rmi_bound_df}} for the
 #'   figure that accompanies this test.
@@ -1162,9 +1149,9 @@ rmi.test <- function(inData, bound = c("miller", "grice", "both"),
 
 #' Hierarchical Bayesian race model inequality test.
 #'
-#' Fits the race-model inequality on the probability scale, where it is free of
-#' participant base time, and reports a population violation curve indexed by
-#' percentile level together with a single min-over-grid global summary.
+#' Fits the race-model inequality on the probability scale and returns a
+#' population violation curve over percentile levels. A min-over-grid statistic
+#' summarizes evidence for a violation anywhere on the tested grid.
 #'
 #' @details
 #' For participant \eqn{i} and percentile level \eqn{u_k}, the evaluation time
@@ -1172,25 +1159,19 @@ rmi.test <- function(inData, bound = c("miller", "grice", "both"),
 #' correct single-target RTs, and the estimand is
 #' \deqn{\delta_{ik} = F_A(t_{ik}) + F_B(t_{ik}) - F_{AB}(t_{ik})}
 #' for the Miller bound, or \eqn{F_{AB}(t_{ik}) - \max(F_A(t_{ik}),
-#' F_B(t_{ik}))} for the Grice bound.  Negative values are violations under
-#' either bound.  Because the inequality is evaluated within a participant,
-#' overall speed cancels exactly and no millisecond quantity enters the group
-#' statistic; the estimand is also invariant to any strictly increasing
+#' F_B(t_{ik}))} for the Grice bound. Negative values are violations under
+#' either bound. The within-participant probability-scale estimand is invariant
+#' to any strictly increasing
 #' reparameterisation of time applied to all three of a participant's
-#' conditions, which is what licenses pooling participants on the shared
-#' percentile index.  Averaging millisecond quantiles across participants
-#' instead -- Miller's original procedure, and the arrangement
-#' \code{\link{rmi.test}} reproduces -- lets a slow participant's violation
-#' outweigh a fast participant's equally severe one, and can cancel real
-#' violations across participants with different base times.
+#' conditions. Participants can therefore be pooled on a shared percentile
+#' index without averaging response times across participants.
 #'
 #' The hierarchy gives each percentile level its own population mean
 #' \eqn{\mu_k} over a between-participant scale \eqn{\tau} shared across the
-#' grid.  Participants are independent given \eqn{(\mu, \tau)}, so the
+#' grid. Participants are independent given \eqn{(\mu, \tau)}, so the
 #' within-participant covariance across levels enters through the marginal
-#' variances only.  The global summary is \eqn{\min_k \mu_k}, whose posterior
-#' probability of being negative is the multiplicity-honest counterpart of the
-#' classical family of per-percentile t-tests; it concerns the tested grid only.
+#' variances only. The global summary is \eqn{\min_k \mu_k} and applies only to
+#' the tested percentile grid.
 #'
 #' @param inData canonical trial data frame with \code{Subject}, \code{RT},
 #'   \code{Correct}, \code{Channel1}, \code{Channel2} and optionally
@@ -1198,21 +1179,17 @@ rmi.test <- function(inData, bound = c("miller", "grice", "both"),
 #' @param CR optional correct-response list when \code{inData} is a list.
 #' @param bound \code{"miller"} (upper bound, the race model inequality) or
 #'   \code{"grice"} (lower bound).
-#' @param probs percentile levels to evaluate.  The default is the 10\%-25\%
+#' @param probs percentile levels to evaluate. The default is the 10\%-25\%
 #'   range recommended by Kiesel, Miller and Ulrich (2007); see
-#'   \code{\link{rmi.test}}.  The multiplicity argument for restricting it is
-#'   weaker here, since the global summary is a single min-over-grid statement
-#'   rather than a family of tests, but the bias argument is not: percentile
-#'   estimates outside that range are the ones most affected by the systematic
-#'   bias they document, and the levels above the median are vacuous for the
-#'   Miller bound in any case.
+#'   \code{\link{rmi.test}}. Their simulations found more percentile-estimation
+#'   bias outside this range; levels above the median are uninformative for the
+#'   Miller bound.
 #' @param ndraws,burnin,thin,chains sampler settings.
 #' @param seed optional RNG seed.
 #' @param hdi mass of the reported highest-density intervals.
 #' @param prior_mean,prior_sd Normal prior on each population mean \eqn{\mu_k}.
-#'   \code{prior_sd} defaults to 0.25: \eqn{\delta} is a difference of
-#'   probabilities, so the default puts most prior mass inside +/- 0.5, which is
-#'   already a very large violation.
+#'   \code{prior_sd} defaults to 0.25. Because \eqn{\delta} is a difference of
+#'   probabilities, this places most prior mass between -0.5 and 0.5.
 #' @param prior_shape,prior_rate inverse-Gamma prior on \eqn{\tau^2} for
 #'   \code{method = "InvGamma"}.
 #' @param prior_tau_sd half-Normal prior scale on \eqn{\tau} for the Stan
@@ -1226,21 +1203,22 @@ rmi.test <- function(inData, bound = c("miller", "grice", "both"),
 #'   participant, which also propagates uncertainty in the percentile grid.
 #' @param n_boot bootstrap replicates when \code{var_method = "bootstrap"}.
 #' @param adapt_delta,max_treedepth,stan_control Stan sampler controls.
-#' @param Condition,Subject optional selectors.
+#' @param Condition,Subject optional selectors. With multiple conditions, the
+#'   model estimates one population curve per condition and pairwise
+#'   percentile-level contrasts.
 #' @param min_n minimum correct trials required per cell; with
 #'   \code{by_block = TRUE} it applies per participant, block, and cell.  The
-#'   default of 10 is half the sample size Ulrich et al. and Kiesel et al. recommend because 
-#'   there are usually 2+ blocks per subject;
-#'   see \code{\link{rmi.test}}.
+#'   default of 10 is intended for analyses with at least two blocks per
+#'   participant; see \code{\link{rmi.test}}.
 #' @param by_block evaluate the inequality separately within each participant
 #'   \emph{and} block, using the \code{Block} column of \code{inData}, and
 #'   average the per-block \eqn{\delta} curves, as Miller (1982) estimated his
-#'   quantiles.  Blocks are disjoint sets of trials, so the sampling covariance
+#'   quantiles. Blocks are disjoint sets of trials, so the sampling covariance
 #'   of the average is the sum of the per-block covariances over the squared
 #'   number of blocks.  \code{FALSE} (the default) pools the whole session.
 #' @param qtype plotting-position rule for the cumulative frequency polygon
-#'   behind the reported time-scale quantiles; see \code{\link{rmi.test}}.  It
-#'   affects the accompanying quantile tables only, never the
+#'   behind the reported time-scale quantiles; see \code{\link{rmi.test}}. It
+#'   affects the accompanying quantile tables but not the
 #'   probability-scale estimand, which uses the plain empirical CDF.
 #' @param cdf_method,kernel_bw estimator and bandwidth for the accompanying
 #'   time-scale quantile tables; see \code{\link{rmi.test}}. These do not alter
@@ -1248,14 +1226,15 @@ rmi.test <- function(inData, bound = c("miller", "grice", "both"),
 #' @param errors how incorrect and omitted trials enter the cell CDFs.
 #'   \code{"discard"} keeps correct trials only, as Miller did and as
 #'   \code{\link{estimate.bounds}} does; \code{"defective"} counts an error in
-#'   the denominator without ever satisfying RT <= t, giving each cell the
-#'   defective CDF whose asymptote is the accuracy rather than 1.  Prefer
-#'   \code{"defective"} when accuracy differs across cells.
-#' @return An \code{sft_bayes} list.  Beyond the standard hierarchical fields it
-#'   carries \code{percentile}, the population violation curve;
-#'   \code{global}, the min-over-grid summary; \code{percentile_contrasts},
-#'   between-condition differences at each level; and \code{quantiles}, the
-#'   time-scale tables consumed by \code{\link{build_rmi_bound_df}}.
+#'   the denominator without satisfying RT <= t. The resulting defective CDF
+#'   approaches the cell accuracy rather than 1.
+#' @return An \code{sft_bayes} list containing \code{percentile}, the
+#'   population violation curve with posterior intervals and violation
+#'   probabilities; \code{global}, the min-over-grid summary;
+#'   \code{percentile_contrasts}, between-condition differences at each level;
+#'   \code{quantiles}, the time-scale tables used by
+#'   \code{\link{build_rmi_bound_df}}; and the standard posterior summaries,
+#'   draws, diagnostics, priors, and shrinkage summaries.
 #' @seealso \code{\link{rmi.test}}, \code{\link{build_rmi_bound_df}},
 #'   \code{\link{build_rmi_violation_df}}.
 #' @references
@@ -1462,33 +1441,27 @@ rmiGroup.bayes <- function(inData, CR = NULL, bound = c("miller", "grice"),
 
 #' Tidy data frames for race model inequality figures.
 #'
-#' \code{build_rmi_bound_df} produces the classical race-model figure: the
-#' redundant-target cumulative distribution plotted against the bound it must
-#' not cross, so that a violation is visible as the AB curve lying to the left
-#' of the \eqn{F_A + F_B} bound.  It is the visual complement to the
-#' per-percentile t-tests of \code{\link{rmi.test}}, which report where that gap
-#' is reliable but not how large it is.  \code{build_rmi_cdf_df} gives the three
-#' condition CDFs behind it (Miller, 1982, Fig. 1), and
-#' \code{build_rmi_violation_df} the violation curve with its interval.
+#' \code{build_rmi_cdf_df} returns the three condition CDFs.
+#' \code{build_rmi_bound_df} returns the redundant-target distribution and its
+#' bound. \code{build_rmi_violation_df} returns the violation curve and
+#' uncertainty interval. Negative values indicate violations in the latter.
 #'
 #' @details
 #' All three consume the result of \code{\link{rmi.test}} or
 #' \code{\link{rmiGroup.bayes}}, or any single per-bound / per-condition element
-#' of one, and return a long data frame ready for \code{ggplot2}.
+#' of one, and return long data suitable for plotting.
 #'
 #' The quantiles in \code{build_rmi_cdf_df} and \code{build_rmi_bound_df} are
-#' averaged across participants at each percentile level -- Miller's
-#' "Vincentized" group curves.  That average is on the millisecond scale and so
-#' is base-time dependent; it is a display convention, and the quantity actually
+#' averaged across participants at each percentile level to form Miller's
+#' Vincentized group curves. This response-time average is a display convention.
+#' The quantity
 #' tested by \code{rmiGroup.bayes} is the within-participant probability-scale
-#' margin returned by \code{build_rmi_violation_df}.  Read the first two as the
-#' picture and the third as the inference.
+#' margin returned by \code{build_rmi_violation_df}.
 #'
 #' \code{build_rmi_violation_df} reports the probability-scale population curve
 #' with its highest-density interval and \code{p_violation} when given a
 #' Bayesian fit, and the time-scale mean difference with its t-interval and
-#' adjusted p-value when given \code{rmi.test} output.  Negative values are
-#' violations on both scales.
+#' adjusted p-value when given \code{rmi.test} output.
 #'
 #' @param x result of \code{\link{rmi.test}} or \code{\link{rmiGroup.bayes}}.
 #' @param bound optional bound to keep when the result holds both.
@@ -1507,7 +1480,9 @@ rmiGroup.bayes <- function(inData, CR = NULL, bound = c("miller", "grice"),
 #'   \code{x} is a raw trial dataset.
 #' @param cdf_method,kernel_bw CDF estimator and kernel bandwidth passed to
 #'   \code{\link{rmi.test}} when \code{x} is a raw trial dataset.
-#' @return A long \code{data.frame}.
+#' @return A long \code{data.frame}. CDF output contains \code{Condition} and
+#'   \code{RT}; bound output contains \code{curve} and \code{RT}; violation
+#'   output contains the estimate, interval, and a \code{scale} column.
 #' @references
 #' Miller, J. (1982). Divided attention: Evidence for coactivation with
 #' redundant signals. \emph{Cognitive Psychology}, 14, 247-279.

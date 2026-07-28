@@ -99,8 +99,19 @@ mic.test <- function(HH, HL, LH, LL, method = c("art", "anova")) {
 
 
 siDominance <- function(HH, HL, LH, LL, method = c("ks", "dp"),
-                        nbin = 20L, nsamp = 10000L, seed = NULL) {
+                        nbin = 20L, nsamp = 10000L, seed = NULL,
+                        CR = NULL, errors = c("discard", "defective")) {
   method <- match.arg(method)
+  errors <- .sft_errors_method(errors)
+  cells <- .sft_sic_cells(HH, HL, LH, LL, CR = CR, errors = errors)
+  if (errors == "defective") {
+    # The unconditional route tests the extended assumption set: survivor
+    # ordering (8B) as before, plus ordering of the correct subdistributions
+    # (8A) and the reverse ordering of the error subdistributions (8D).
+    return(.sft_dominance_defective(cells, method = method, nbin = nbin,
+                                    nsamp = nsamp, seed = seed))
+  }
+  HH <- cells$HH$rt; HL <- cells$HL$rt; LH <- cells$LH$rt; LL <- cells$LL$rt
   pairs <- list(
     list(greater = "S.hh > S.hl", less = "S.hh < S.hl", x = HH, y = HL),
     list(greater = "S.hh > S.lh", less = "S.hh < S.lh", x = HH, y = LH),
@@ -166,8 +177,26 @@ siDominance <- function(HH, HL, LH, LL, method = c("ks", "dp"),
 
 
 sicDPtest <- function(dat, nbin = NULL, nsamp = 10000L, maxn = 500000L,
-                      tolSIC = 5e-2, tolMIC = NULL, ci = .95, seed = NULL) {
+                      tolSIC = NULL, tolMIC = NULL, ci = .95, seed = NULL,
+                      CR = NULL, errors = c("discard", "defective")) {
   if (!is.list(dat) || length(dat) != 4L) stop("dat must be a list in HH, HL, LH, LL order.")
+  errors <- .sft_errors_method(errors)
+  if (errors == "defective") {
+    # Unconditional route: one Dirichlet per cell over correct and error bins,
+    # yielding sign posteriors for each of the three contrasts. The default
+    # tolerance is tighter than the correct-only default because the error and
+    # agnostic contrasts are bounded by accuracy differences and so are an
+    # order of magnitude smaller than a conditional SIC.
+    cells <- .sft_sic_cells(dat[[1L]], dat[[2L]], dat[[3L]], dat[[4L]],
+                            CR = CR, errors = errors)
+    return(.sft_sic_dp_defective(cells, nbin = nbin, nsamp = nsamp, maxn = maxn,
+                                 tolSIC = tolSIC %||% 1e-2, ci = ci, seed = seed))
+  }
+  tolSIC <- tolSIC %||% 5e-2
+  if (!is.null(CR)) {
+    dat <- lapply(.sft_sic_cells(dat[[1L]], dat[[2L]], dat[[3L]], dat[[4L]],
+                                 CR = CR, errors = errors), function(z) z$rt)
+  }
   dat <- lapply(dat, function(x) as.numeric(x[is.finite(x)]))
   if (any(!lengths(dat))) stop("All SIC cells must contain finite RTs.")
   pooled <- unlist(dat, use.names = FALSE)
@@ -238,13 +267,25 @@ sicDPtest <- function(dat, nbin = NULL, nsamp = 10000L, maxn = 500000L,
 
 sictestBayes <- function(HH, HL, LH, LL, method = c("DP", "IG"), model = NULL,
                          nbin = NULL, nsamp = 10000L, maxn = 500000L,
-                         seed = NULL, ...) {
+                         seed = NULL, CR = NULL,
+                         errors = c("discard", "defective"), ...) {
   method <- match.arg(method)
+  errors <- .sft_errors_method(errors)
   if (method == "IG") {
     stop("The legacy IG/Stan SIC route is not bundled in sft_plus; use method='DP' or supply a separate model implementation.")
   }
   result <- sicDPtest(list(HH, HL, LH, LL), nbin = nbin, nsamp = nsamp,
-                      maxn = maxn, seed = seed, ...)
+                      maxn = maxn, seed = seed, CR = CR, errors = errors, ...)
+  dname <- paste("HH:", deparse(substitute(HH)), "HL:", deparse(substitute(HL)),
+                 "LH:", deparse(substitute(LH)), "LL:", deparse(substitute(LL)))
+  if (errors == "defective") {
+    # No architecture classification here: the sign of each contrast is
+    # reported for the correct, error, and accuracy-agnostic curves separately.
+    return(list(statistic = result$BF, BFp = result$BFp,
+                posterior = result$posterior,
+                method = "Nonparametric Bayesian unconditional SIC sign test",
+                data.name = dname, errors = errors, details = result))
+  }
   bf <- result$BF
   names(bf)[names(bf) == "Z"] <- "Zero"
   names(bf)[names(bf) == "N"] <- "Negative"
@@ -253,21 +294,26 @@ sictestBayes <- function(HH, HL, LH, LL, method = c("DP", "IG"), model = NULL,
   names(bf)[names(bf) == "nP"] <- "NegPos.MICpos"
   names(bf)[names(bf) == "Np"] <- "NegPos.MICneg"
   list(statistic = bf, BFp = result$BFp, method = "Nonparametric Bayesian SIC test",
-       data.name = paste("HH:", deparse(substitute(HH)), "HL:", deparse(substitute(HL)),
-                         "LH:", deparse(substitute(LH)), "LL:", deparse(substitute(LL))),
-       details = result)
+       data.name = dname, errors = errors, details = result)
 }
 
 
 sic <- function(HH, HL, LH, LL, domtest = "ks", sictest = "ks",
                 mictest = c("art", "anova"), interpolate = FALSE,
-                nbin = 20L, nsamp = 10000L, maxn = 500000L, seed = NULL, ...) {
+                nbin = 20L, nsamp = 10000L, maxn = 500000L, seed = NULL,
+                CR = NULL, errors = c("discard", "defective"), ...) {
+  errors <- .sft_errors_method(errors)
+  cells <- .sft_sic_cells(HH, HL, LH, LL, CR = CR, errors = errors)
+  d <- siDominance(HH, HL, LH, LL, method = domtest, nbin = nbin, nsamp = nsamp,
+                   seed = seed, CR = CR, errors = errors)
+  if (errors == "defective") return(.sft_sic_defective_fit(
+    cells, d, sictest = sictest, mictest = mictest, interpolate = interpolate,
+    nbin = nbin, nsamp = nsamp, maxn = maxn, seed = seed))
+  HH <- cells$HH$rt; HL <- cells$HL$rt; LH <- cells$LH$rt; LL <- cells$LL$rt
   xs <- list(HH = HH, HL = HL, LH = LH, LL = LL)
-  if (any(!vapply(xs, function(x) any(is.finite(x)), logical(1)))) stop("All SIC cells need finite RTs.")
-  times <- sort(unique(unlist(lapply(xs, function(x) x[is.finite(x)]), use.names = FALSE)))
+  times <- sort(unique(unlist(xs, use.names = FALSE)))
   sic_values <- .sft_ecdf(LH)(times) + .sft_ecdf(HL)(times) - .sft_ecdf(HH)(times) - .sft_ecdf(LL)(times)
   sic_fun <- if (interpolate) .sft_curve(times, sic_values) else stats::stepfun(times, c(0, sic_values))
-  d <- siDominance(HH, HL, LH, LL, method = domtest, nbin = nbin, nsamp = nsamp, seed = seed)
   st <- if (sictest == "bf") sictestBayes(HH, HL, LH, LL, nbin = nbin, nsamp = nsamp, maxn = maxn, seed = seed) else sic.test(HH, HL, LH, LL, method = sictest)
   mt <- mic.test(HH, HL, LH, LL, method = mictest)
   n_eff <- 1 / sum(1 / vapply(xs, function(x) sum(is.finite(x)), numeric(1)))
@@ -275,33 +321,89 @@ sic <- function(HH, HL, LH, LL, domtest = "ks", sictest = "ks",
                                                   c(unname(st$negative$statistic), st$negative$p.value))
   list(SIC = sic_fun, MIC = unname(mt$statistic), MICtest = mt,
        SICtest = st, Dominance = d, Dvals = dvals, N = n_eff,
-       HH = .sft_ecdf(HH), HL = .sft_ecdf(HL), LH = .sft_ecdf(LH), LL = .sft_ecdf(LL))
+       HH = .sft_ecdf(HH), HL = .sft_ecdf(HL), LH = .sft_ecdf(LH), LL = .sft_ecdf(LL),
+       errors = errors)
+}
+
+
+# The unconditional counterpart of sic(). Returns the three interaction
+# contrasts, per-cell accuracy, and the large-t asymptotes. No architecture
+# classification is attempted: the mapping from these signs to an architecture
+# needs the task type (simple detection, OR, or AND) and admits real mimicry
+# between serial and parallel variants once error rates are non-negligible.
+.sft_sic_defective_fit <- function(cells, dominance, sictest, mictest,
+                                   interpolate, nbin, nsamp, maxn, seed) {
+  fit <- .sft_sic_defective(cells, interpolate = interpolate)
+  # The mean interaction contrast is taken over every observed response, not
+  # just the correct ones, so that it estimates the same D2E the unconditional
+  # predictions refer to.
+  rts <- lapply(cells, function(z) z$rt[is.finite(z$rt)])
+  mt <- mic.test(rts$HH, rts$HL, rts$LH, rts$LL, method = mictest)
+  st <- if (sictest == "bf") {
+    .sft_sic_dp_defective(cells, nbin = nbin, nsamp = nsamp, maxn = maxn,
+                          seed = seed)
+  } else {
+    # The Houpt-Townsend KS route is not valid for subdistributions: its null
+    # is a proper-CDF Kolmogorov law, whereas these curves carry mass < 1.
+    # Group-level inference is available from sicPermTest().
+    NULL
+  }
+  list(SIC = fit$SIC, SIC.correct = fit$SIC.correct, SIC.error = fit$SIC.error,
+       MIC = unname(mt$statistic), MICtest = mt, SICtest = st, Dominance = dominance,
+       Dvals = NULL, N = 1 / sum(1 / fit$n), times = fit$times, values = fit$values,
+       accuracy = fit$accuracy, omissions = fit$omissions, asymptote = fit$asymptote,
+       HH = fit$cdf$all$HH, HL = fit$cdf$all$HL, LH = fit$cdf$all$LH, LL = fit$cdf$all$LL,
+       correct.cdf = fit$cdf$correct, error.cdf = fit$cdf$error,
+       errors = "defective")
 }
 
 
 sicGroup <- function(inData, sictest = c("ks", "bf"), mictest = c("art", "anova"),
                      domtest = c("ks", "dp"), alpha.sic = .05, plotSIC = TRUE,
-                     ...) {
+                     errors = c("discard", "defective"), min.trials = 10L,
+                     perm = TRUE, nperm = 1001L, stat = c("CvM", "KS", "AD", "Aly"),
+                     times = NULL, n.times = 1000L, seed = NULL, ...) {
   inData <- .sft_normalize_columns(inData)
   sictest <- match.arg(sictest); domtest <- match.arg(domtest); mictest <- match.arg(mictest)
+  stat <- match.arg(stat)
+  errors <- .sft_errors_method(errors)
   req <- c("Subject", "Condition", "RT", "Correct", "Channel1", "Channel2")
   if (!all(req %in% names(inData))) stop("inData is missing required SIC columns.")
-  times <- sort(unique(round(inData$RT[is.finite(inData$RT)])))
-  records <- list(); curves <- list(); fits <- list(); n <- 0L
-  for (cond in unique(inData$Condition)) for (subj in unique(inData$Subject)) {
-    d <- inData[inData$Condition == cond & inData$Subject == subj & inData$Correct == 1, , drop = FALSE]
-    cell <- list(d$RT[d$Channel1 == 2 & d$Channel2 == 2], d$RT[d$Channel1 == 2 & d$Channel2 == 1],
-                  d$RT[d$Channel1 == 1 & d$Channel2 == 2], d$RT[d$Channel1 == 1 & d$Channel2 == 1])
-    if (min(lengths(cell)) <= 10L) next
-    n <- n + 1L; fit <- sic(cell[[1]], cell[[2]], cell[[3]], cell[[4]],
-                             domtest = domtest, sictest = sictest, mictest = mictest, ...)
+  times <- if (is.null(times)) .sft_time_grid(inData$RT, n.times) else
+    sort(unique(as.numeric(times)[is.finite(times)]))
+  if (!length(times)) stop("times contains no finite values.")
+  subjects <- .sft_sic_subject_cells(inData, errors = errors,
+                                     min.trials = min.trials)
+  records <- list(); curves <- list(); fits <- list()
+  correct_curves <- list(); error_curves <- list()
+  for (n in seq_along(subjects)) {
+    s <- subjects[[n]]
+    cell <- lapply(s$cells, function(z) z$rt)
+    cr <- lapply(s$cells, function(z) z$correct)
+    fit <- sic(cell$HH, cell$HL, cell$LH, cell$LL, domtest = domtest,
+               sictest = sictest, mictest = mictest, CR = cr, errors = errors,
+               seed = seed, ...)
     fits[[n]] <- fit; curves[[n]] <- fit$SIC(times)
-    records[[n]] <- data.frame(Subject = as.character(subj), Condition = as.character(cond),
-                                stringsAsFactors = FALSE)
+    if (errors == "defective") {
+      correct_curves[[n]] <- fit$SIC.correct(times)
+      error_curves[[n]] <- fit$SIC.error(times)
+    }
+    records[[n]] <- data.frame(Subject = s$subject, Condition = s$condition,
+                               stringsAsFactors = FALSE)
   }
   overview <- if (!length(records)) data.frame() else do.call(rbind, records)
   if (nrow(overview)) {
-    if (sictest == "bf") {
+    if (errors == "defective") {
+      # No Model column: architecture classification is not attempted on the
+      # unconditional contrasts. What is reported instead is the accuracy each
+      # cell reached and where each contrast settles as t grows.
+      overview$Accuracy.HH <- vapply(fits, function(f) unname(f$accuracy[["HH"]]), numeric(1))
+      overview$Accuracy.LL <- vapply(fits, function(f) unname(f$accuracy[["LL"]]), numeric(1))
+      overview$SIC.correct.asymptote <- vapply(fits, function(f) unname(f$asymptote[["correct"]]), numeric(1))
+      overview$SIC.error.asymptote <- vapply(fits, function(f) unname(f$asymptote[["error"]]), numeric(1))
+      overview$MIC <- ifelse(vapply(fits, function(f) f$MICtest$p.value < alpha.sic, logical(1)),
+                             "Significant", "Nonsignificant")
+    } else if (sictest == "bf") {
       model <- vapply(fits, function(f) names(f$SICtest$statistic)[which.max(f$SICtest$statistic)], character(1))
       overview$Model <- model
     } else {
@@ -312,8 +414,26 @@ sicGroup <- function(inData, sictest = c("ks", "bf"), mictest = c("art", "anova"
       overview$MIC <- ifelse(vapply(fits, function(f) f$MICtest$p.value < alpha.sic, logical(1)), "Significant", "Nonsignificant")
     }
   }
-  list(overview = overview, sic.fn = if (length(curves)) do.call(rbind, curves) else matrix(numeric(), 0, length(times)),
-       sic = fits, times = times)
+  empty <- matrix(numeric(), 0, length(times))
+  out <- list(overview = overview,
+              sic.fn = if (length(curves)) do.call(rbind, curves) else empty,
+              sic = fits, times = times, errors = errors)
+  if (errors == "defective") {
+    out$sic.correct.fn <- if (length(correct_curves)) do.call(rbind, correct_curves) else empty
+    out$sic.error.fn <- if (length(error_curves)) do.call(rbind, error_curves) else empty
+    # The interaction contrast itself is tested at the group level: the
+    # permutation scheme swaps whole participants between the two mixtures, so
+    # it needs more than one participant to say anything.
+    if (isTRUE(perm)) {
+      conds <- unique(overview$Condition)
+      out$perm <- stats::setNames(lapply(conds, function(cond) {
+        if (sum(overview$Condition == cond) < 2L) return(NULL)
+        sicPermTest(inData, stat = stat, nperm = nperm, alpha = alpha.sic,
+                    min.trials = min.trials, Condition = cond, seed = seed)
+      }), conds)
+    }
+  }
+  out
 }
 
 

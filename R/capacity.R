@@ -156,8 +156,85 @@ capacity.altieri <- function(RT, CR = NULL, ratio = TRUE, Condition = NULL, Subj
 }
 
 
+.sft_capacity_window <- function(rts, crs, trim, qtype = 5) {
+  # The window over which every contributing estimate is supported.  C(t) is a
+  # ratio of cumulative hazards, so near the edge of a cell's own correct RTs
+  # one of the risk sets has seen almost no events and the ratio is dominated
+  # by a single observation.  Intersecting the per-cell quantile windows keeps
+  # only the times where all of them have something to say.
+  if (is.null(trim)) return(c(-Inf, Inf))
+  trim <- sort(as.numeric(trim))
+  if (length(trim) != 2L || any(!is.finite(trim)) || trim[1] < 0 || trim[2] > 1) {
+    stop("trim must be NULL or two probabilities in [0, 1].")
+  }
+  lo <- -Inf; hi <- Inf
+  for (i in seq_along(rts)) {
+    x <- as.numeric(rts[[i]])[.sft_correct(crs[[i]], length(rts[[i]]))]
+    x <- x[is.finite(x)]
+    if (!length(x)) return(c(NA_real_, NA_real_))
+    q <- stats::quantile(x, probs = trim, names = FALSE, type = qtype)
+    lo <- max(lo, q[1]); hi <- min(hi, q[2])
+  }
+  if (!is.finite(lo) || !is.finite(hi) || lo >= hi) return(c(NA_real_, NA_real_))
+  c(lo, hi)
+}
+
+
+.sft_capacity_cells <- function(d, channels, rule) {
+  if (rule == "STST") {
+    context <- rowSums(d[channels] > 0) == 1L & rowSums(d[channels] < 0) > 0L
+    target <- rowSums(d[channels] >= 0) == length(channels) & rowSums(d[channels] != 0) == 1L
+    return(list(rt = list(d$RT[context], d$RT[target]),
+                cr = list(d$Correct[context], d$Correct[target])))
+  }
+  context <- rowSums(d[channels] > 0) == length(channels)
+  pick <- function(col, j) {
+    other <- setdiff(seq_along(channels), j)
+    d[[col]][d[[channels[j]]] > 0 & rowSums(d[channels[other]] == 0) == length(other)]
+  }
+  list(rt = c(list(d$RT[context]), lapply(seq_along(channels), function(j) pick("RT", j))),
+       cr = c(list(d$Correct[context]), lapply(seq_along(channels), function(j) pick("Correct", j))))
+}
+
+
+.sft_capacity_plot_mode <- function(plotCt) {
+  if (is.logical(plotCt)) return(if (isTRUE(plotCt)) "individual" else "none")
+  match.arg(as.character(plotCt)[1L], c("individual", "group", "both", "none"))
+}
+
+
+.sft_capacity_group_plot <- function(times, mat, cond, ratio, col = NULL, lwd = NULL, ...) {
+  # Every participant on one axis, with the pointwise median over those who
+  # are defined at that time.  Each curve stops where its own support does, so
+  # the median is taken over a shrinking set towards the edges; `n` is drawn
+  # alongside so that thinning is visible rather than implied.
+  if (is.null(mat) || !length(mat) || !any(is.finite(mat))) return(invisible(NULL))
+  if (is.null(dim(mat))) mat <- matrix(mat, nrow = 1L)
+  keep <- which(colSums(is.finite(mat)) > 0L)
+  if (!length(keep)) return(invisible(NULL))
+  tt <- times[keep]; mm <- mat[, keep, drop = FALSE]
+  ylim <- range(mm[is.finite(mm)])
+  graphics::plot(range(tt), ylim, type = "n", xlab = "Time", ylab = "C(t)",
+                 main = paste(cond, "\nAll participants"), ...)
+  faint <- if (is.null(col)) grDevices::rgb(0, 0, 0, .25) else col
+  for (i in seq_len(nrow(mm))) {
+    ok <- is.finite(mm[i, ])
+    if (any(ok)) graphics::lines(tt[ok], mm[i, ok], col = faint)
+  }
+  med <- apply(mm, 2L, function(v) if (any(is.finite(v))) stats::median(v[is.finite(v)]) else NA_real_)
+  ok <- is.finite(med)
+  if (any(ok)) graphics::lines(tt[ok], med[ok], lwd = if (is.null(lwd)) 2.5 else lwd)
+  graphics::abline(if (ratio) 1 else 0, 0, lty = 2)
+  n_ok <- colSums(is.finite(mm))
+  graphics::mtext(paste0("n = ", min(n_ok), " to ", max(n_ok)), side = 3, line = .2, cex = .8)
+  invisible(NULL)
+}
+
+
 capacityGroup <- function(inData, acc.cutoff = .9, ratio = TRUE, OR = NULL,
-                          stopping.rule = c("OR", "AND", "STST"), plotCt = TRUE, ...) {
+                          stopping.rule = c("OR", "AND", "STST"),
+                          plotCt = c("individual", "group", "both", "none"),
+                          trim = c(.05, .95), qtype = 5, ...) {
   inData <- .sft_normalize_columns(inData)
   required <- c("Subject", "Condition", "RT", "Correct")
   if (!is.data.frame(inData) || !all(required %in% names(inData))) {
@@ -168,36 +245,41 @@ capacityGroup <- function(inData, acc.cutoff = .9, ratio = TRUE, OR = NULL,
   rule <- if (!is.null(OR)) if (isTRUE(OR)) "OR" else "AND" else match.arg(stopping.rule)
   subjects <- unique(inData$Subject)
   conditions <- unique(inData$Condition)
-  rt <- as.numeric(inData$RT)
-  finite_rt <- rt[is.finite(rt)]
-  if (!length(finite_rt)) stop("inData$RT contains no finite response times.")
-  times <- seq(stats::quantile(finite_rt, .001, names = FALSE),
-               stats::quantile(finite_rt, .999, names = FALSE), length.out = 1000)
-  fits <- list(); curves <- list(); rows <- list(); z_by_condition <- list(); n <- 0L
+  plotCt <- .sft_capacity_plot_mode(plotCt)
+  if (!any(is.finite(as.numeric(inData$RT)))) {
+    stop("inData$RT contains no finite response times.")
+  }
+  # The grid spans the union of the windows the curves are actually reported
+  # on.  Taking the .001 and .999 quantiles of the pooled response times
+  # instead let a handful of anticipations from any one participant stretch the
+  # grid far below the range where any capacity coefficient is defined.
+  windows <- list()
+  for (cond in conditions) {
+    for (subj in subjects) {
+      d <- inData[inData$Condition == cond & inData$Subject == subj, , drop = FALSE]
+      if (!nrow(d)) next
+      cells <- .sft_capacity_cells(d, channels, rule)
+      w <- .sft_capacity_window(cells$rt, cells$cr, trim, qtype)
+      if (all(is.finite(w))) windows[[length(windows) + 1L]] <- w
+    }
+  }
+  if (!length(windows)) {
+    finite_rt <- as.numeric(inData$RT); finite_rt <- finite_rt[is.finite(finite_rt)]
+    span <- stats::quantile(finite_rt, c(.001, .999), names = FALSE)
+  } else {
+    span <- range(unlist(windows))
+  }
+  times <- seq(span[1L], span[2L], length.out = 1000)
+  fits <- list(); curves <- list(); rows <- list(); z_by_condition <- list()
+  specs <- list(); n <- 0L
 
   for (cond in conditions) {
     z <- numeric()
     for (subj in subjects) {
       d <- inData[inData$Condition == cond & inData$Subject == subj, , drop = FALSE]
       if (!nrow(d)) next
-      if (rule == "STST") {
-        context <- rowSums(d[channels] > 0) == 1L & rowSums(d[channels] < 0) > 0L
-        target <- rowSums(d[channels] >= 0) == length(channels) & rowSums(d[channels] != 0) == 1L
-        rts <- list(d$RT[context], d$RT[target])
-        cr <- list(d$Correct[context], d$Correct[target])
-      } else {
-        context <- rowSums(d[channels] > 0) == length(channels)
-        singles <- lapply(seq_along(channels), function(j) {
-          other <- setdiff(seq_along(channels), j)
-          d[["RT"]][d[[channels[j]]] > 0 & rowSums(d[channels[other]] == 0) == length(other)]
-        })
-        single_cr <- lapply(seq_along(channels), function(j) {
-          other <- setdiff(seq_along(channels), j)
-          d[["Correct"]][d[[channels[j]]] > 0 & rowSums(d[channels[other]] == 0) == length(other)]
-        })
-        rts <- c(list(d$RT[context]), singles)
-        cr <- c(list(d$Correct[context]), single_cr)
-      }
+      cells <- .sft_capacity_cells(d, channels, rule)
+      rts <- cells$rt; cr <- cells$cr
       accuracy <- vapply(cr, function(x) {
         x <- as.logical(x)
         if (!length(x)) return(FALSE)
@@ -211,7 +293,22 @@ capacityGroup <- function(inData, acc.cutoff = .9, ratio = TRUE, OR = NULL,
 
       n <- n + 1L
       fits[[n]] <- fit
-      curves[[n]] <- if (is.null(fit)) rep(NA_real_, length(times)) else fit$Ct(times)
+      curve <- if (is.null(fit)) rep(NA_real_, length(times)) else fit$Ct(times)
+      if (!is.null(fit)) {
+        win <- .sft_capacity_window(rts, cr, trim, qtype)
+        curve[is.na(win[1]) | times < win[1] | times > win[2]] <- NA_real_
+      }
+      curves[[n]] <- curve
+      # A ready-made series spec, so the tidy builders can be driven straight
+      # from the group fit without re-deriving each participant's cells.  `rt`
+      # is the redundant-target cell, which is what C(t) is a statement about.
+      if (!is.null(fit)) {
+        specs[[length(specs) + 1L]] <-
+          list(label = as.character(subj), Subject = as.character(subj),
+               Condition = as.character(cond), fn = fit$Ct,
+               rt = rts[[1L]], cr = cr[[1L]],
+               benchmark = d$RT[.sft_correct(d$Correct, nrow(d))])
+      }
       if (!is.null(fit) && !is.null(fit$Ctest)) z <- c(z, unname(fit$Ctest$statistic))
       label <- if (is.null(fit)) NA_character_ else if (!is.null(fit$Ctest) &&
           is.finite(fit$Ctest$p.value) && fit$Ctest$p.value < .05) {
@@ -219,11 +316,18 @@ capacityGroup <- function(inData, acc.cutoff = .9, ratio = TRUE, OR = NULL,
       } else "Nonsignificant"
       rows[[n]] <- data.frame(Subject = as.character(subj), Condition = as.character(cond),
                               Capacity = label, stringsAsFactors = FALSE)
-      if (plotCt && !is.null(fit)) {
-        plot(times, fit$Ct(times), type = "l", xlab = "Time", ylab = "C(t)",
+      if (plotCt %in% c("individual", "both") && !is.null(fit) && any(is.finite(curve))) {
+        keep <- is.finite(curve)
+        plot(times[keep], curve[keep], type = "l", xlab = "Time", ylab = "C(t)",
              main = paste(cond, "\nParticipant", subj), ...)
         abline(if (ratio) 1 else 0, 0, lty = 2)
       }
+    }
+    if (plotCt %in% c("group", "both")) {
+      cond_rows <- which(vapply(rows, function(r) identical(r$Condition, as.character(cond)) &&
+                                  !identical(r$Subject, "Group"), logical(1)))
+      mat <- do.call(rbind, curves[cond_rows])
+      .sft_capacity_group_plot(times, mat, cond, ratio, ...)
     }
     z_by_condition[[as.character(cond)]] <- z
     if (length(z) > 2L) {
@@ -239,5 +343,6 @@ capacityGroup <- function(inData, acc.cutoff = .9, ratio = TRUE, OR = NULL,
   overview <- if (length(rows)) do.call(rbind, rows) else data.frame()
   curve_mat <- if (length(curves)) do.call(rbind, curves) else matrix(numeric(), 0, length(times))
   list(overview = overview, Ct.fn = curve_mat, capacity = fits,
-       times = times, z = z_by_condition, rule = rule)
+       times = times, z = z_by_condition, rule = rule, specs = specs,
+       trim = trim, qtype = qtype)
 }

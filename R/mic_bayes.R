@@ -292,29 +292,30 @@
 
 #' Hierarchical Bayesian relative mean interaction contrast (MIC).
 #'
-#' Estimates the salience mean interaction contrast and pools it across
-#' participants.  The pooled estimand is the *relative* MIC,
+#' Estimates the salience mean interaction contrast and partially pools it
+#' across participants. The estimand is the relative MIC,
 #' \eqn{\rho_i = \mathrm{MIC}_i / M_i}, where \eqn{\mathrm{MIC}_i =
 #' \bar T_{HH} - \bar T_{HL} - \bar T_{LH} + \bar T_{LL}} and \eqn{M_i} is the
-#' equal-weight grand-mean RT of the four cells.  Dividing by \eqn{M_i} removes
+#' equal-weight grand-mean RT of the four cells. Dividing by \eqn{M_i} removes
 #' multiplicative speed differences between participants while preserving the
-#' sign, the exact-null boundary, and the survivor-interaction-contrast
-#' interpretation, and it yields a proportional region of practical equivalence.
+#' sign and zero point of the interaction contrast. A region of practical
+#' equivalence is therefore expressed as a proportion of mean RT.
 #'
 #' Cells are taken from the salience 2x2 defined by \code{Channel1} and
-#' \code{Channel2} (2 = High, 1 = Low).  A single participant is fitted with the
+#' \code{Channel2} (2 = High, 1 = Low). A single participant is fitted with the
 #' analytic normal-normal posterior; two or more are pooled hierarchically with
-#' the same conjugate Gibbs (\code{"InvGamma"}) or Stan samplers as
+#' the conjugate Gibbs (\code{"InvGamma"}) or Stan samplers used by
 #' \code{\link{capacityGroup.bayes}}.
 #'
 #' @param inData A canonical SFT data frame (\code{Subject}, \code{RT},
 #'   \code{Correct}, \code{Channel1}, \code{Channel2}, optional \code{Condition}),
-#'   with `subjects`, `rt`, and `LogicalRule` accepted as aliases for the first,
-#'   second, and optional condition columns,
+#'   with `subjects`, `rt`, and `LogicalRule` accepted as column aliases;
 #'   a nested list of per-subject \code{HH}/\code{HL}/\code{LH}/\code{LL} RT
 #'   lists, or a flat single-subject \code{HH}/\code{HL}/\code{LH}/\code{LL} list.
-#' @param Condition,Subject Optional single condition and subject selectors used
-#'   when \code{inData} is a data frame.
+#' @param Condition,Subject Optional selectors for data-frame input.
+#'   `Condition = NULL` fits all available conditions. Multiple-condition fits
+#'   return one population mean per condition and their pairwise contrasts.
+#'   Participants are not linked across conditions.
 #' @param correct Keep only correct trials (the conditional-correct MIC).
 #' @param var_method \code{"analytic"} (delta-method, the default) or
 #'   \code{"bootstrap"} (within-cell resampling) sampling variance of \eqn{\rho}.
@@ -327,7 +328,7 @@
 #' @param prior_tau_sd Half-Normal prior scale on \eqn{\tau_\rho} for the Stan
 #'   samplers.
 #' @param rope Optional proportional region of practical equivalence on
-#'   \eqn{\rho}; e.g. \code{0.025} treats interactions under 2.5\% of mean RT as
+#'   \eqn{\rho}; for example, \code{0.025} treats interactions under 2.5\% of mean RT as
 #'   negligible.
 #' @param ndraws,burnin,thin,chains,seed,hdi Sampler and summary controls.
 #' @param method One of \code{"InvGamma"}, \code{"HalfNormal"}, or
@@ -336,9 +337,10 @@
 #' @param tau2_prior_shape,tau2_prior_rate Back-compatible aliases for
 #'   \code{prior_shape} and \code{prior_rate}.
 #' @return A list mirroring \code{\link{capacityGroup.bayes}} with an added
-#'   \code{estimand} label.  \code{posterior_probability} reports
+#'   \code{estimand} label. \code{posterior_probability} reports
 #'   over-additive / under-additive / additive probabilities for the population
-#'   (hierarchical fits) and each subject.
+#'   and each participant. Multiple-condition fits also contain
+#'   \code{condition_contrasts}.
 #' @seealso \code{\link{capacityGroup.bayes}}, \code{\link{mic.test}},
 #'   \code{\link{mic.bayes}}
 #' @export

@@ -9,7 +9,7 @@
 }
 \usage{
 correctfun(d)
-get_time_range(rt_list, probs = c(.05, .95), by = .001)
+get_time_range(rt_list, probs = c(.05, .95), by = .001, qtype = 5)
 smooth_one_cdf(t, y, smooth_cdf = "none", smooth_spar = .65)
 }
 \arguments{
@@ -17,6 +17,7 @@ smooth_one_cdf(t, y, smooth_cdf = "none", smooth_spar = .65)
   \item{rt_list}{A list of numeric response-time vectors.}
   \item{probs}{Probability bounds used for trimming the empirical time range.}
   \item{by}{Step size for the generated time grid.}
+  \item{qtype}{Quantile algorithm, as in \code{\link{rmi.test}}.}
   \item{t, y}{Time and cumulative distribution values to be smoothed.}
   \item{smooth_cdf}{Smoothing method: \code{"none"}, \code{"mono"}, or \code{"spline"}.}
   \item{smooth_spar}{Smoothing parameter for spline fitting.}

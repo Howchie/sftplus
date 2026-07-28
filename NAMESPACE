@@ -2,14 +2,15 @@
 export(estimate.bounds, assessment, assessmentGroup, fPCAassessment, fPCAcapacity,
        mic.test, sic.test, capacity.and, capacity.id, capacity.or, capacity.altieri,
        capacity.stst, capacityGroup, estimateNAH, estimateNAK, estimateUCIPor,
-       estimateUCIPand, sic, sicGroup, sicGroupBF, sicDPtest, sictestBayes, ucip.test,
+       estimateUCIPand, sic, sicGroup, sicGroupBF, sicDPtest, sictestBayes, sicPermTest, ucip.test,
        ucip.id.test, siDominance, capacityGroup.bayes, ucip.bayes, micGroup.bayes,
        resilience, resilience.test, resilience.bayes, resilienceGroup.bayes,
        simulate_sft, simulate_sft_group, correctfun,
        assessment_ta_or, assessment_ta_and, assessment_donkin_discrimination,
        rmi.test, rmiGroup.bayes,
-       build_ct_df, build_sic_df,
+       build_ct_df, build_sic_df, build_sic_defective_df,
        build_at_df, build_cdf_df, get_time_range, smooth_one_cdf,
+       build_ct_prob_df, build_cdf_prob_df, build_prob_summary_df,
        build_rmi_cdf_df, build_rmi_bound_df, build_rmi_violation_df,
        find_equal_vc_yes, semiparametricSFT.bayes, mic.bayes, sic.bayes,
        sft_data_to_rt, prior_sensitivity, spike_slab, sft_waic)
@@ -18,10 +19,11 @@ S3method(print, sft_prior_sensitivity)
 
 # Import all packages listed as Imports or Depends
 import(methods,fda,SuppDists)
-importFrom("grDevices", "dev.new", "grey")
+importFrom("grDevices", "dev.new", "grey", "rgb")
 importFrom("graphics", "abline", "axis", "legend", "lines", "mtext",
            "par", "plot", "text", "hist")
 importFrom("stats", "anova", "approxfun", "ecdf", "ks.test", "lm",
            "median", "optimize", "pnorm", "quantile", "runif", "stepfun",
-           "t.test", "smooth.spline", "predict", "setNames")
+           "t.test", "smooth.spline", "predict", "setNames", "rgamma",
+           "qbeta")
 importFrom("utils", "tail")

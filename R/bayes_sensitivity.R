@@ -17,32 +17,26 @@
 
 #' Prior sensitivity of a Bayesian SFT fit.
 #'
-#' Refits the model over a grid of alternative-prior widths and reports how the
-#' population estimate and the null Bayes factors move.  This is the
-#' Jeffreys-Lindley check: a point-null Bayes factor is not prior-free, and a
-#' more diffuse alternative mechanically favours the null, so the honest summary
-#' of a point null is a curve rather than a number.
+#' Refits the model over a grid of alternative-prior widths and records the
+#' population estimate and null Bayes factors. A more diffuse alternative
+#' increases support for a point null through the Jeffreys-Lindley effect, so
+#' the full sensitivity curve should accompany a reported Bayes factor.
 #'
-#' The interval null is prior-sensitive too, and not necessarily less so:
-#' widening the alternative lowers the prior mass inside the region, which
-#' raises \code{BF01_interval} directly.  Both columns should be read as curves.
-#' What they do give you is two different dependencies -- the point null moves
-#' with the prior density at zero, the interval null with the prior mass in the
-#' ROPE -- so agreement between them across the grid is meaningful in a way that
-#' either number alone is not.
+#' The point-null Bayes factor depends on the prior density at zero. The
+#' interval-null Bayes factor depends on the prior mass inside the region of
+#' practical equivalence. Both are reported across the same grid.
 #'
 #' @param fit A fitted object from \code{\link{capacityGroup.bayes}},
 #'   \code{\link{micGroup.bayes}}, \code{\link{resilienceGroup.bayes}},
 #'   \code{\link{ucip.bayes}}, or \code{\link{resilience.bayes}}.
 #' @param prior_sd Grid of alternative-prior standard deviations.  \code{NULL}
 #'   spans an eightfold range either side of the fitted value.
-#' @param ndraws,burnin,chains Sampler controls for each refit.  Defaults are
-#'   lighter than a headline fit because only summaries are retained.
+#' @param ndraws,burnin,chains Sampler controls for each refit.
 #' @param seed Base random seed; each grid point uses a distinct offset.
 #' @param rope Practical-equivalence threshold for the interval null.  Defaults
 #'   to the one used by the original fit.
-#' @return A data frame with one row per grid point, carrying the population
-#'   mean and interval, both Bayes factors, and a flag marking the fitted value.
+#' @return A data frame with one row per grid point containing the population
+#'   mean and interval, both Bayes factors, and a flag for the fitted value.
 #'   \code{attr(x, "reference_prior_sd")} records that value.
 #' @seealso \code{\link{spike_slab}}
 #' @export
@@ -221,22 +215,19 @@ print.sft_prior_sensitivity <- function(x, ...) {
 
 #' Per-participant spike-and-slab test of the SFT null.
 #'
-#' Asks which individual participants depart from the benchmark, rather than
-#' whether the population mean does.  Each participant's effect is either
+#' Tests which participants depart from the benchmark. Each participant's effect is either
 #' exactly zero (the spike) or drawn from the population slab, and the posterior
-#' inclusion probability \eqn{P(z_i = 1)} is that participant's evidence for a
-#' genuine effect.
+#' inclusion probability \eqn{P(z_i = 1)} measures support for the slab.
 #'
-#' Each participant also gets a Bayes factor from the change in inclusion odds
+#' Each participant also receives a Bayes factor from the change in inclusion odds
 #' relative to the prior inclusion probability, which is the prior mean of
-#' \eqn{w}.  Because \eqn{w} is estimated, the participants shrink toward one
-#' another: an isolated departure in an otherwise null sample is discounted,
-#' which is the multiplicity control an independent per-participant test lacks.
+#' \eqn{w}. Estimating \eqn{w} shares information about inclusion across
+#' participants and discounts isolated departures in an otherwise null sample.
 #'
 #' @param fit A fitted object carrying \code{refit_data}; see
 #'   \code{\link{prior_sensitivity}}.
 #' @param w_shape1,w_shape2 Beta prior on the inclusion rate \eqn{w}.  The
-#'   default \code{Beta(1, 1)} is uniform, giving a prior inclusion probability
+#'   default \code{Beta(1, 1)} is uniform and gives a prior inclusion probability
 #'   of one half.
 #' @param ndraws,burnin,thin,chains,seed Sampler controls.
 #' @param hdi Interval mass for the slab-effect summaries.

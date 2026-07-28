@@ -37,11 +37,20 @@
 }
 
 
-#' Analytic Bayesian resilience posterior for one participant.
+#' Bayesian resilience analysis
 #'
-#' Bayesian companion to \code{\link{resilience.test}}.  The effect is the
+#' Bayesian companion to \code{\link{resilience.test}}. The effect is the
 #' Houpt-Townsend score contrast against the UCIP-OR benchmark computed from the
-#' resilience conditions, carried through to a conjugate normal posterior.
+#' resilience conditions, with a conjugate normal posterior.
+#'
+#' @details
+#' Resilience has the same functional form as OR capacity,
+#' \deqn{R(t) = H_{AB}(t) / (H_{AY}(t) + H_{XB}(t)),}
+#' but its single-target conditions include distractors. The score statistic
+#' accumulates risk-set-weighted increments across the observed time course and
+#' does not use a separate evaluation horizon. In complete data, the
+#' Nelson-Aalen cumulative hazard at a sample's maximum depends only on its
+#' sample size, so a terminal-time hazard contrast is not informative.
 #'
 #' @param inData Canonical SFT data frame, or a list of AB, AY, and XB RT
 #'   vectors (double target, and each single target accompanied by a distractor).
@@ -53,10 +62,26 @@
 #'   within-condition \code{"bootstrap"} variance.
 #' @param ndraws,seed,hdi,prior_mean,prior_sd,chains,rope Posterior and summary
 #'   controls, as in \code{\link{ucip.bayes}}.
-#' @param Condition,Subject Optional selectors when \code{inData} is a data frame.
-#' @return A list mirroring \code{\link{ucip.bayes}}.
-#' @seealso \code{\link{resilienceGroup.bayes}}, \code{\link{resilience.test}},
-#'   \code{\link{ucip.bayes}}
+#' @param Condition,Subject Optional selectors for data-frame input.
+#'   `Condition = NULL` fits all available conditions in a group analysis and
+#'   returns one population mean per condition and pairwise contrasts.
+#'   Participants are not linked across conditions.
+#' @return A list mirroring \code{\link{ucip.bayes}}, with participant scores in
+#'   \code{score} and reference information in \code{V_ref}.
+#' @references
+#' Little, D. R., Eidels, A., Fific, M., & Wang, T. S. L. (2015).
+#' Understanding the influence of distractors on workload capacity.
+#' \emph{Journal of Mathematical Psychology}, 68-69, 25-36.
+#'
+#' Houpt, J. W., & Little, D. R. (2016). Statistical analysis of the resilience
+#' function. \emph{Behavior Research Methods}.
+#'
+#' Houpt, J. W., & Townsend, J. T. (2012). Statistical measures for workload
+#' capacity analysis. \emph{Journal of Mathematical Psychology}, 56, 341-355.
+#' @seealso \code{\link{resilience.test}}, \code{\link{ucip.bayes}},
+#'   \code{\link{capacityGroup.bayes}}, \code{\link{prior_sensitivity}},
+#'   \code{\link{spike_slab}}
+#' @name resilience_bayes
 #' @export
 resilience.bayes <- function(inData, CR = NULL,
                              ndraws = 10000L, seed = NULL, hdi = .94,
@@ -134,19 +159,18 @@ resilience.bayes <- function(inData, CR = NULL,
 #' Hierarchical Bayesian resilience across participants.
 #'
 #' Pools the resilience score contrast against the UCIP-OR benchmark with the
-#' same normal-normal machinery as \code{\link{capacityGroup.bayes}}.  A single
+#' same normal-normal model as \code{\link{capacityGroup.bayes}}. A single
 #' participant in a single condition is routed to \code{\link{resilience.bayes}}.
 #'
-#' @inheritParams resilience.bayes
+#' @rdname resilience_bayes
 #' @param burnin,thin Sampler controls.
 #' @param method Hierarchical sampler: \code{"InvGamma"}, \code{"HalfNormal"}, or
 #'   \code{"Centered"}.
 #' @param prior_shape,prior_rate,prior_tau_sd Between-participant scale priors.
 #' @param adapt_delta,max_treedepth,stan_control Stan sampler controls.
-#' @param Condition Optional condition selector; supply more than one value to
-#'   fit the condition-factor hierarchy and obtain pairwise contrasts.
-#' @return A list mirroring \code{\link{capacityGroup.bayes}}.
-#' @seealso \code{\link{resilience.bayes}}, \code{\link{capacityGroup.bayes}}
+#' @return A list mirroring \code{\link{capacityGroup.bayes}}, with participant
+#'   scores in \code{score}, reference information in \code{V_ref}, and
+#'   \code{condition_contrasts} for multiple-condition fits.
 #' @export
 resilienceGroup.bayes <- function(inData, CR = NULL, ndraws = 10000L,
                                   prior_shape = NULL,

@@ -8,7 +8,9 @@ Function to calculate survivor interaction contrast and associated measures.
 }
     
 \usage{
-sic(HH, HL, LH, LL, domtest="ks", sictest="ks", mictest=c("art", "anova"), interpolate=FALSE, nbin=20L, nsamp=10000L, maxn=500000L, seed=NULL, ...)
+sic(HH, HL, LH, LL, domtest="ks", sictest="ks", mictest=c("art", "anova"),
+    interpolate=FALSE, nbin=20L, nsamp=10000L, maxn=500000L, seed=NULL,
+    CR=NULL, errors=c("discard", "defective"), ...)
 }
 \arguments{
   \item{HH}{Response times from the High--High condition.}
@@ -20,6 +22,8 @@ sic(HH, HL, LH, LL, domtest="ks", sictest="ks", mictest=c("art", "anova"), inter
   \item{mictest}{Which type of hypothesis test to use for the MIC, either adjusted rank transform or ANOVA. }
   \item{interpolate}{Return an interpolated SIC curve rather than a step function.}
   \item{nbin, nsamp, maxn, seed}{Controls for the Bayesian SIC/dominance Monte Carlo calculations.}
+  \item{CR}{Optional list of four correctness vectors in HH, HL, LH, LL order (or named with those cells), one entry per trial of the matching response-time cell.  Required when \code{errors="defective"}.  Supplying it with \code{errors="discard"} simply filters the incorrect trials.}
+  \item{errors}{\code{"discard"} conditions on accuracy by dropping incorrect responses, the default and the historical behaviour.  \code{"defective"} retains them and returns the unconditional interaction contrasts described below.}
   \item{...}{Additional arguments reserved for Bayesian calculations.}
 }
 \details{
@@ -29,6 +33,12 @@ This function calculates the Survivor Interaction Contrast (SIC; Townsend & Noza
 
 For the SIC function to distinguish among the processing types, the salience manipulation on each channel must selectively influence its respective channel (although see Eidels, Houpt, Altieri, Pei & Townsend, 2010 for SIC prediction from interactive parallel models).  Although the selective influence assumption cannot be directly tested, one implication is that the distribution the HH response times stochastically dominates the HL and LH distributions which each in turn stochastically dominate the LL response time distribution.  This implication is automatically tested in this function.  The KS dominance test uses eight two-sample Kolmogorov-Smirnov tests:  HH < HL, HH < LH, HL < LL, LH < LL should be significant while HH > HL, HH > LH, HL > LL, LH > LL should not.  The DP uses four tests to determine which relation has the highest Bayes factor assuming a Dirichlet process prior for each of (HH, HL), (HH, LH), (HL, LL) and (LH, LL).  See Heathcote, Brown, Wagenmakers & Eidels, 2010, for more details.
 
+\bold{Unconditional analysis.}  With \code{errors="defective"} the function follows Gondan and Legner's generalisation of Townsend and Nozawa's theory to tasks with non-negligible error rates.  Every trial is retained and each cell distribution is normalised by the cell total rather than by its own count of correct trials, giving the two subdistributions \eqn{F^{+}(t) = P(RT \le t \cap correct)} and \eqn{F^{-}(t) = P(RT \le t \cap error)}.  Neither reaches 1; \eqn{F^{+}} asymptotes at the cell accuracy.  Three interaction contrasts are returned, one for each of \eqn{F^{+}}, \eqn{F^{-}} and their accuracy-agnostic sum, and they satisfy \code{SIC = SIC.correct + SIC.error} at every \eqn{t}.  Trials with a non-finite response time are treated as omissions: they count towards the cell total but never contribute at a finite time.
+
+Gondan and Legner state their results for \eqn{\Delta^2 F}, whereas this package's SIC is the survivor contrast \eqn{-\Delta^2 F}, so every sign in their tables is reversed here.  A race model has \code{SIC.correct} positive and \code{SIC.error} negative, recovering the familiar positive parallel-OR SIC; AND parallel-exhaustive processing reverses both.
+
+No architecture classification is attempted in this mode.  Mapping the three signs onto an architecture requires knowing whether the task is a simple detection task, an OR-task or an AND-task, and, once error rates are appreciable, serial and parallel variants of the same stopping rule can mimic one another.  The mean interaction contrast is computed over all observed responses rather than the correct ones alone, so that it estimates the same quantity the unconditional predictions refer to.  Group-level inference on the three contrasts is available from \code{\link{sicPermTest}}, which \code{\link{sicGroup}} calls automatically; the Houpt-Townsend KS test is not applied, because its null distribution is that of a proper CDF whereas these curves carry mass below 1.
+
 This function also performs a statistical analysis to determine whether the positive and negative parts of the SIC are significantly different from zero. Currently the only statistical test is based on the generalization of the two-sample Kolmogorov-Smirnov test described in Houpt & Townsend, 2010.  This test performs two separate null-hypothesis tests:  One test for whether the largest positive value of the SIC is significantly different from zero and one test for whether the largest negative value is significantly different from zero.
 }
 \value{
@@ -37,8 +47,12 @@ This function also performs a statistical analysis to determine whether the posi
  \item{Dvals}{A Matrix containing the values of the test statistic and the associated \eqn{p}-values.}
  \item{MIC}{Results of an adjusted rank transform test of the mean interaction contrast.}
  \item{N}{The scaling factor used for the KS test of the SIC form.}
+
+ With \code{errors="defective"} the result instead contains \code{SIC} (the accuracy-agnostic contrast), \code{SIC.correct} and \code{SIC.error}, together with \code{times} and the matching raw \code{values}; \code{accuracy} and \code{omissions} per cell; \code{asymptote}, the value each contrast reaches at the largest observed time; the unconditional cell distributions in \code{HH}, \code{HL}, \code{LH}, \code{LL} and the subdistributions in \code{correct.cdf} and \code{error.cdf}; and the extended \code{Dominance} battery.  \code{SICtest} is \code{NULL} unless \code{sictest="bf"}, in which case it holds sign posteriors for each of the three contrasts.
 }
 \references{
+Gondan, M. & Legner, L. Systems factorial technology: unconditional interaction contrasts for correct and incorrect responses.
+
 Townsend, J.T. & Nozawa, G. (1995). Spatio-temporal properties of elementary perception: An investigation of parallel, serial and coactive theories. \emph{Journal of Mathematical Psychology, 39}, 321-360.
 
 Houpt, J.W. & Townsend, J.T. (2010). The statistical properties of the survivor interaction contrast. \emph{Journal of Mathematical Psychology, 54}, 446-453.
@@ -50,6 +64,7 @@ Joe Houpt <joseph.houpt@utsa.edu>
 }
 \seealso{
 \code{\link{stepfun}}
+\code{\link{sicPermTest}}
 \code{\link{sicGroup}}
 \code{\link{mic.test}}
 \code{\link{sic.test}}

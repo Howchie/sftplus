@@ -3,8 +3,78 @@
 # estimation engine in ucip_bayes_engine.R.
 
 
-# Analytic normal-normal posterior for one participant. There is no
-# population mean or between-participant scale in this model.
+#' Bayesian UCIP capacity analysis
+#'
+#' `ucip.bayes()` estimates a single participant's deviation from the
+#' unlimited-capacity independent-parallel (UCIP) benchmark.
+#' `capacityGroup.bayes()` partially pools participant effects in a
+#' hierarchical model. Both functions use the Houpt-Townsend score statistic
+#' also used by [ucip.test()].
+#'
+#' @details
+#' Three effect scales are available. `score` uses
+#' \eqn{\theta_i = U_i/V_i}, the Peto one-step log hazard-ratio estimate, with
+#' precision \eqn{V_i}. It is the default and satisfies
+#' \eqn{Cz_i = \theta_i\sqrt{V_i}}. `standardized` reports the same model on
+#' the reference-\eqn{Cz} scale,
+#' \eqn{\phi_i = \theta_i\sqrt{V_{\mathrm{ref}}}}. The default priors are
+#' transformed by the same factor, so `score` and `standardized` differ only
+#' in units. `multiplicative` estimates
+#' \eqn{\eta_i = \log(A_i/B_i)}, the log weighted-capacity ratio, using a
+#' delta-method precision. `capacity` is retained as an alias for
+#' `multiplicative`.
+#'
+#' Default priors are anchored on the `score` scale:
+#' \eqn{\mu_\theta \sim N(0, 0.5^2)},
+#' \eqn{\tau_\theta \sim \mathrm{HalfNormal}(0, 0.5)}, or
+#' \eqn{\tau_\theta^2 \sim \mathrm{InvGamma}(2, 0.25)} for the conjugate
+#' sampler. On the `standardized` scale, standard deviations are multiplied by
+#' \eqn{\sqrt{V_{\mathrm{ref}}}} and the inverse-gamma rate by
+#' \eqn{V_{\mathrm{ref}}}. The `multiplicative` defaults are 0.35 for both
+#' standard deviations and \eqn{0.35^2} for the inverse-gamma rate.
+#'
+#' `ucip.bayes()` uses an analytic normal-normal posterior. A one-participant,
+#' one-condition call to `capacityGroup.bayes()` is routed to that analysis.
+#' Group fits use either a conjugate Gibbs sampler (`InvGamma`) or a Stan NUTS
+#' model with a half-normal prior on the between-participant standard deviation
+#' (`HalfNormal` or `Centered`).
+#'
+#' @param inData Canonical SFT trial data, a list of response-time vectors, or
+#'   for group fits a nested list with one response-time list per participant.
+#'   Data frames may use `subjects`, `rt`, and `LogicalRule` as aliases for
+#'   `Subject`, `RT`, and `Condition`.
+#' @param CR Optional correctness indicators matching list input.
+#' @param stopping.rule Stopping rule: `"OR"`, `"AND"`, or `"STST"`.
+#' @param ndraws Number of retained posterior draws per chain.
+#' @param seed Optional random seed.
+#' @param hdi Probability mass of highest-density intervals.
+#' @param prior_mean Mean of the normal prior on the participant effect for
+#'   `ucip.bayes()` or the population effect for `capacityGroup.bayes()`.
+#' @param prior_sd Standard deviation of that normal prior. `NULL` selects a
+#'   scale-specific default.
+#' @param chains Number of chains.
+#' @param rope Optional half-width of the region of practical equivalence on
+#'   the selected effect scale.
+#' @param Condition,Subject Optional values used to subset data-frame input.
+#'   With group data, `Condition = NULL` fits every condition and returns a
+#'   population mean for each condition plus pairwise contrasts. The model does
+#'   not link repeated participants across conditions.
+#' @param score_method Effect scale: `"score"` (default), `"standardized"`, or
+#'   `"multiplicative"`.
+#' @param var_method Variance estimator: `"analytic"` for the martingale
+#'   variance or `"bootstrap"` for within-cell resampling.
+#' @param n_boot Number of bootstrap replicates when
+#'   `var_method = "bootstrap"`.
+#' @return An `sft_bayes` list containing posterior summaries, probabilities,
+#'   Bayes factors, participant score estimates, posterior draws, predictive
+#'   summaries, diagnostics, and model metadata. Group fits also contain
+#'   population summaries and, for multiple conditions, condition contrasts.
+#' @references
+#' Houpt, J. W., & Townsend, J. T. (2012). Statistical measures for workload
+#' capacity analysis. \emph{Journal of Mathematical Psychology}, 56, 341-355.
+#' @seealso [ucip.test()], [prior_sensitivity()], [spike_slab()]
+#' @name bayes_group
+#' @export
 ucip.bayes <- function(inData, CR = NULL,
                        stopping.rule = c("OR", "AND", "STST"),
                        ndraws = 10000L, seed = NULL,
@@ -108,33 +178,22 @@ ucip.bayes <- function(inData, CR = NULL,
 }
 
 
-# Hierarchical Bayesian companion to the UCIP/Cz score test.
-#
-# The default score_method = "score" pools theta = U / V, the Peto one-step
-# estimate of the log hazard ratio for the UCIP contrast, with precision V.
-# theta is the effect the Cz statistic tests: Cz_i = theta_i * sqrt(V_i)
-# reproduces ucip.test() exactly. Its location is stable as trials accumulate
-# while V grows linearly with them, which is what makes a fixed prior width a
-# genuine effect-size prior that the data can outweigh.
-#
-# score_method = "standardized" reports the same fit on the reference-Cz scale
-# phi = theta * sqrt(V_ref); since that is a deterministic linear map given the
-# data, it returns the identical posterior under the default priors, just in Cz
-# units. score_method = "multiplicative" instead uses eta = log(A/B) with its
-# delta-method precision (formerly "capacity", still accepted as an alias).
-#
-# The InvGamma method is the exact conjugate Gibbs sampler; HalfNormal is a
-# non-centred Stan model and Centered is its centred Stan counterpart, both with
-# a half-normal prior on tau.
-#
-# prior_mean stays at 0: the population score-effect prior is centred on the
-# UCIP benchmark (mu = 0 == unlimited-capacity independent parallel). The
-# remaining prior widths (prior_sd on mu, prior_tau_sd / prior_shape / prior_rate
-# on the between-subject scale tau) default to NULL and are resolved by
-# .sft_default_priors() once the data are scored: mu ~ N(0, 0.5^2) and
-# tau ~ HalfNormal(0, 0.5) on the theta log-hazard-ratio scale, pushed through
-# the sqrt(V_ref) map for "standardized". Supplying any of these arguments
-# explicitly overrides its default.
+#' @rdname bayes_group
+#'
+#' @param burnin Number of warm-up iterations per chain.
+#' @param thin Retain every `thin`th post-warm-up draw.
+#' @param prior_shape,prior_rate Shape and rate of the inverse-gamma prior on
+#'   the between-participant variance for `method = "InvGamma"`. `NULL` selects
+#'   scale-specific defaults.
+#' @param method Hierarchical sampler: `"InvGamma"`, `"HalfNormal"`, or
+#'   `"Centered"`.
+#' @param prior_tau_sd Half-normal prior scale for the between-participant
+#'   standard deviation in the Stan models. `NULL` selects a scale-specific
+#'   default.
+#' @param adapt_delta,max_treedepth,stan_control Stan sampler controls.
+#' @param tau2_prior_shape,tau2_prior_rate Deprecated aliases for
+#'   `prior_shape` and `prior_rate`.
+#' @export
 capacityGroup.bayes <- function(inData, CR = NULL, stopping.rule = c("OR", "AND", "STST"),
                             ndraws = 10000L, prior_shape = NULL, prior_rate = NULL,
                             seed = NULL, hdi = .94, prior_mean = 0,
